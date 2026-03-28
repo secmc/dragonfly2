@@ -914,21 +914,32 @@ func plannedStructureInfoForStart(g Generator, setName string, start plannedStru
 	paletteNames := make([]string, 0, 16)
 	seen := make(map[string]struct{}, 32)
 	for _, piece := range start.pieces {
+		for _, blockInfo := range piece.manualBlocks {
+			stateName, ok := structurePaletteStateName(blockInfo.state.Name)
+			if !ok {
+				continue
+			}
+			if _, ok := seen[stateName]; ok {
+				continue
+			}
+			seen[stateName] = struct{}{}
+			paletteNames = append(paletteNames, stateName)
+		}
 		for _, placement := range piece.element.placements {
 			template, err := g.structureTemplates.Template(placement.templateName)
 			if err != nil {
 				continue
 			}
 			for _, state := range template.Palette {
-				switch state.Name {
-				case "minecraft:air", "minecraft:jigsaw", "minecraft:structure_void":
+				stateName, ok := structurePaletteStateName(state.Name)
+				if !ok {
 					continue
 				}
-				if _, ok := seen[state.Name]; ok {
+				if _, ok := seen[stateName]; ok {
 					continue
 				}
-				seen[state.Name] = struct{}{}
-				paletteNames = append(paletteNames, state.Name)
+				seen[stateName] = struct{}{}
+				paletteNames = append(paletteNames, stateName)
 			}
 		}
 	}
@@ -943,6 +954,20 @@ func plannedStructureInfoForStart(g Generator, setName string, start plannedStru
 		Size:         infoSize,
 		PaletteNames: paletteNames,
 	}
+}
+
+func structurePaletteStateName(name string) (string, bool) {
+	if name == "" {
+		return "", false
+	}
+	if name[0] != '#' && name[:min(len(name), len("minecraft:"))] != "minecraft:" {
+		name = "minecraft:" + name
+	}
+	switch name {
+	case "minecraft:air", "minecraft:jigsaw", "minecraft:structure_void", "minecraft:structure_block":
+		return "", false
+	}
+	return name, true
 }
 
 func (g Generator) plannerPotentialStartChunksWithinGridDistance(planner structurePlanner, maxGridDistance int) []world.ChunkPos {

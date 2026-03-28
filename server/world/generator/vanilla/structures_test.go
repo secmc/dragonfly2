@@ -1023,6 +1023,59 @@ func TestFindPlannedStructureStartUsesGridRadius(t *testing.T) {
 	}
 }
 
+func TestStructureInfoIncludesManualPaletteNames(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	tests := []struct {
+		name          string
+		dim           world.Dimension
+		setName       string
+		structureName string
+		maxGrid       int
+	}{
+		{name: "stronghold", dim: world.Overworld, setName: "strongholds", structureName: "stronghold", maxGrid: 512},
+		{name: "ocean monument", dim: world.Overworld, setName: "ocean_monuments", structureName: "monument", maxGrid: 96},
+		{name: "woodland mansion", dim: world.Overworld, setName: "woodland_mansions", structureName: "mansion", maxGrid: 96},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewForDimension(0, tt.dim)
+			start, _, _ := findPlannedStartForStructureInSet(t, g, tt.setName, tt.structureName, tt.maxGrid)
+			info, ok := FindPlannedStructureStartForDimension(0, tt.dim, tt.setName, tt.maxGrid)
+			if !ok {
+				t.Fatalf("expected public structure info lookup to find %s", tt.name)
+			}
+			if info.StartChunk != start.startChunk {
+				t.Fatalf("expected public structure info to return start chunk %v, got %v", start.startChunk, info.StartChunk)
+			}
+			if len(info.PaletteNames) == 0 {
+				t.Fatalf("expected public structure info to expose palette names for %s", tt.name)
+			}
+
+			manualPalette := manualPaletteNamesForStart(start)
+			if len(manualPalette) == 0 {
+				t.Fatalf("expected %s planned start to contain manual palette states", tt.name)
+			}
+			infoPalette := make(map[string]struct{}, len(info.PaletteNames))
+			for _, name := range info.PaletteNames {
+				infoPalette[name] = struct{}{}
+			}
+			for name := range manualPalette {
+				if _, ok := infoPalette[name]; ok {
+					return
+				}
+			}
+			expectedNames := make([]string, 0, len(manualPalette))
+			for name := range manualPalette {
+				expectedNames = append(expectedNames, name)
+			}
+			slices.Sort(expectedNames)
+			t.Fatalf("expected public structure info palette %v to include at least one manual palette name from %v", info.PaletteNames, expectedNames)
+		})
+	}
+}
+
 func TestPlanStrongholdStructureStart(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
@@ -1765,6 +1818,20 @@ func assertManualStructureStatesResolve(t *testing.T, g Generator, start planned
 			}
 		}
 	}
+}
+
+func manualPaletteNamesForStart(start plannedStructureStart) map[string]struct{} {
+	palette := make(map[string]struct{}, 16)
+	for _, piece := range start.pieces {
+		for _, blockInfo := range piece.manualBlocks {
+			switch blockInfo.state.Name {
+			case "air", "minecraft:air", "structure_void", "minecraft:structure_void", "structure_block", "minecraft:structure_block":
+				continue
+			}
+			palette[normalizeStructureTestStateName(blockInfo.state.Name)] = struct{}{}
+		}
+	}
+	return palette
 }
 
 func normalizeStructureTestStateProperties(properties map[string]string) string {

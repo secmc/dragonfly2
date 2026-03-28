@@ -5,6 +5,7 @@ import (
 	"testing"
 	_ "unsafe"
 
+	"github.com/df-mc/dragonfly/server/block"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/df-mc/dragonfly/server/world/chunk"
@@ -101,6 +102,68 @@ func TestEyeOfEnderResolvesStrongholdTarget(t *testing.T) {
 	}
 	if !gotTarget.ApproxEqualThreshold(wantTarget, 1e-6) {
 		t.Fatalf("expected eye of ender target %v, got %v", wantTarget, gotTarget)
+	}
+}
+
+func TestGuidedEyeOfEnderIgnoresBlockCollision(t *testing.T) {
+	finaliseEyeBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	info := vanilla.PlannedStructureInfo{
+		StructureSet: "strongholds",
+		Structure:    "stronghold",
+		Origin:       cube.Pos{0, 32, 256},
+		Size:         [3]int{48, 16, 32},
+	}
+	w := world.Config{
+		Dim:       world.Overworld,
+		Provider:  world.NopProvider{},
+		Generator: eyeOfEnderLocatorGenerator{info: info, ok: true},
+		Entities:  DefaultRegistry,
+	}.New()
+	defer func() { _ = w.Close() }()
+
+	var (
+		firstPos  mgl64.Vec3
+		secondPos mgl64.Vec3
+		tickNil   bool
+		errText   string
+	)
+	<-w.Exec(func(tx *world.Tx) {
+		tx.SetBlock(cube.Pos{0, 64, 1}, block.Stone{}, nil)
+
+		owner := tx.AddEntity(NewText("eye-owner", mgl64.Vec3{0.5, 64.5, 0.5}))
+		eye := tx.AddEntity(NewEyeOfEnder(world.EntitySpawnOpts{
+			Position: owner.Position(),
+			Velocity: cube.Rotation{0, 0}.Vec3().Mul(1.25),
+		}, owner)).(*Ent)
+
+		beh, ok := eye.Behaviour().(*EyeOfEnderBehaviour)
+		if !ok {
+			errText = "expected eye of ender behaviour"
+			return
+		}
+
+		first := beh.Tick(eye, tx)
+		if first == nil {
+			tickNil = true
+			return
+		}
+		second := beh.Tick(eye, tx)
+		if second == nil {
+			tickNil = true
+			return
+		}
+		firstPos = first.Position()
+		secondPos = second.Position()
+	})
+	if errText != "" {
+		t.Fatal(errText)
+	}
+	if tickNil {
+		t.Fatal("expected guided eye of ender to keep moving through an obstructing block")
+	}
+	if secondPos[2] <= firstPos[2] {
+		t.Fatalf("expected guided eye of ender to keep advancing toward the target, got first=%v second=%v", firstPos, secondPos)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/df-mc/dragonfly/server/world/generator/vanilla"
 	"github.com/go-gl/mathgl/mgl64"
+	"math"
 	"time"
 )
 
@@ -64,24 +65,45 @@ func (b *EyeOfEnderBehaviour) Tick(e *Ent, tx *world.Tx) *Movement {
 		b.resolveTarget(tx, e.Position())
 	}
 	if b.hasTarget {
-		e.data.Vel = eyeOfEnderVelocityToward(e.data.Pos, e.data.Vel, b.target)
+		return b.tickGuided(e, tx)
 	}
 
 	m := b.projectile.Tick(e, tx)
 	if m == nil {
 		return nil
 	}
-	if b.hasTarget {
-		delta := b.target.Sub(m.Position())
-		delta[1] = 0
-		if delta.Len() < 12 {
-			b.close = true
-		}
-	}
 	if e.Age() >= b.lifetime {
 		b.close = true
 	}
 	return m
+}
+
+func (b *EyeOfEnderBehaviour) tickGuided(e *Ent, tx *world.Tx) *Movement {
+	pos := e.data.Pos
+	previousVel := e.data.Vel
+	vel := eyeOfEnderVelocityToward(pos, previousVel, b.target)
+	nextPos := pos.Add(vel)
+	rot := eyeOfEnderRotationFromVelocity(vel, e.data.Rot)
+
+	e.data.Pos, e.data.Vel, e.data.Rot = nextPos, vel, rot
+	delta := b.target.Sub(nextPos)
+	delta[1] = 0
+	if delta.Len() < 12 {
+		b.close = true
+	}
+	if e.Age() >= b.lifetime {
+		b.close = true
+	}
+	return &Movement{
+		v:        tx.Viewers(pos),
+		e:        e,
+		pos:      nextPos,
+		vel:      vel,
+		dpos:     nextPos.Sub(pos),
+		dvel:     vel.Sub(previousVel),
+		rot:      rot,
+		onGround: false,
+	}
 }
 
 type eyeOfEnderStructureLocator interface {
@@ -136,6 +158,16 @@ func eyeOfEnderVelocityToward(pos, vel, target mgl64.Vec3) mgl64.Vec3 {
 		return desired
 	}
 	return vel.Mul(0.72).Add(desired.Mul(0.28))
+}
+
+func eyeOfEnderRotationFromVelocity(vel mgl64.Vec3, fallback cube.Rotation) cube.Rotation {
+	horizontal := math.Hypot(vel[0], vel[2])
+	if horizontal < 0.001 && math.Abs(vel[1]) < 0.001 {
+		return fallback
+	}
+	yaw := mgl64.RadToDeg(math.Atan2(-vel[0], vel[2]))
+	pitch := mgl64.RadToDeg(-math.Atan2(vel[1], horizontal))
+	return cube.Rotation{yaw, pitch}
 }
 
 func clampFloat(value, minValue, maxValue float64) float64 {
