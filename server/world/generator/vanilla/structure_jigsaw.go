@@ -871,7 +871,8 @@ func boxWithinHorizontalRange(box structureBox, centerX, centerZ, maxDistance in
 func (g Generator) buildPlannedStructure(
 	candidate structurePlannerCandidate,
 	start weightedStartTemplate,
-	startX, startZ, minY, maxY int,
+	startX, startZ int,
+	surfaceSampler *structureHeightSampler,
 	rng *gen.Xoroshiro128,
 ) ([]plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
 	rootElement := resolvedPoolElement{
@@ -912,9 +913,12 @@ func (g Generator) buildPlannedStructure(
 	rootBox := rootElement.worldBox(rootOrigin, rootRotation)
 	centerX := (rootBox.minX + rootBox.maxX) / 2
 	centerZ := (rootBox.minZ + rootBox.maxZ) / 2
-	baseY := g.sampleStructureHeightProvider(candidate.jigsaw.StartHeight, minY, maxY, rng)
+	surfaceLevelAt := func(x, z int) int {
+		return surfaceSampler.worldSurfaceLevelAt(x, z)
+	}
+	baseY := g.sampleStructureHeightProvider(candidate.jigsaw.StartHeight, surfaceSampler.minY, surfaceSampler.maxY, rng)
 	if candidate.jigsaw.ProjectStartToHeight != "" {
-		baseY += g.preliminarySurfaceLevelAt(centerX, centerZ, minY, maxY)
+		baseY += surfaceLevelAt(centerX, centerZ)
 	}
 	rootOrigin[1] = baseY - 1
 	rootBox = rootElement.worldBox(rootOrigin, rootRotation)
@@ -1006,7 +1010,7 @@ func (g Generator) buildPlannedStructure(
 							targetOrigin[1] = state.piece.bounds.minY + deltaY
 						} else {
 							if !sourceSurfaceLoaded {
-								sourceSurfaceY = g.preliminarySurfaceLevelAt(sourceJigsaw.pos[0], sourceJigsaw.pos[2], minY, maxY)
+								sourceSurfaceY = surfaceLevelAt(sourceJigsaw.pos[0], sourceJigsaw.pos[2])
 								sourceSurfaceLoaded = true
 							}
 							targetOrigin[1] = sourceSurfaceY - targetJigsaw.localY

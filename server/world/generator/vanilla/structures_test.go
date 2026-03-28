@@ -60,6 +60,44 @@ func TestPlanVillageStructureStart(t *testing.T) {
 	t.Fatal("did not find a planned village structure start")
 }
 
+func TestPlanVillageStructureStartProjectsToWorldSurface(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForPlanner(t, g, "villages", 24)
+
+	centerX := (start.rootOrigin[0]*2 + start.rootSize[0] - 1) / 2
+	centerZ := (start.rootOrigin[2]*2 + start.rootSize[2] - 1) / 2
+	wantY := g.worldSurfaceLevelAt(centerX, centerZ, -64, 319)
+	gotY := start.rootOrigin[1] + 1
+	if gotY != wantY {
+		t.Fatalf("expected village root to project to world surface y=%d at (%d,%d), got %d", wantY, centerX, centerZ, gotY)
+	}
+}
+
+func TestStructureHeightSamplerMatchesGenerator(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	surfaceSampler := newStructureHeightSampler(g, -64, 319)
+	positions := [][2]int{
+		{0, 0},
+		{8, 8},
+		{127, -193},
+		{-255, 319},
+		{2048, -1536},
+	}
+	for _, pos := range positions {
+		blockX, blockZ := pos[0], pos[1]
+		if got, want := surfaceSampler.preliminarySurfaceLevelAt(blockX, blockZ), g.preliminarySurfaceLevelAt(blockX, blockZ, -64, 319); got != want {
+			t.Fatalf("expected preliminary sampler height %d at (%d,%d), got %d", want, blockX, blockZ, got)
+		}
+		if got, want := surfaceSampler.worldSurfaceLevelAt(blockX, blockZ), g.worldSurfaceLevelAt(blockX, blockZ, -64, 319); got != want {
+			t.Fatalf("expected world sampler height %d at (%d,%d), got %d", want, blockX, blockZ, got)
+		}
+	}
+}
+
 func TestPlacePlannedStructureWritesBlocks(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
@@ -290,7 +328,8 @@ func TestBuriedTreasurePlacementWritesChest(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
 	g := New(0)
-	_, pieces, box, _, _, ok := g.buildBuriedTreasureStructure(0, 0, -64, 319, gen.RandomSpreadPlacement{Frequency: 1})
+	surfaceSampler := newStructureHeightSampler(g, -64, 319)
+	_, pieces, box, _, _, ok := g.buildBuriedTreasureStructure(0, 0, surfaceSampler, gen.RandomSpreadPlacement{Frequency: 1})
 	if !ok || len(pieces) == 0 {
 		t.Fatal("expected buried treasure plan")
 	}
@@ -690,7 +729,8 @@ func TestBuildEndCityStructureOnKnownOuterIslandChunk(t *testing.T) {
 	}
 	for _, pos := range candidates {
 		rng := g.structureRNG("end_cities", pos)
-		templateName, pieces, _, _, _, ok := g.buildEndCityStructure(pos, int(pos[0])*16, int(pos[1])*16, world.End.Range()[0], world.End.Range()[1], &rng)
+		surfaceSampler := newStructureHeightSampler(g, world.End.Range()[0], world.End.Range()[1])
+		templateName, pieces, _, _, _, ok := g.buildEndCityStructure(pos, int(pos[0])*16, int(pos[1])*16, surfaceSampler, &rng)
 		if ok && templateName != "" && len(pieces) > 1 {
 			return
 		}

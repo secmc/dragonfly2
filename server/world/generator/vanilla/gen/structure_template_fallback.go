@@ -49,51 +49,431 @@ func decodeStructureTemplateFallback(data []byte) (StructureTemplate, error) {
 	if _, err := nbtReader.readString(); err != nil {
 		return StructureTemplate{}, err
 	}
-	rootValue, err := nbtReader.readTagPayload(rootTag, 0)
-	if err != nil {
-		return StructureTemplate{}, err
-	}
-	root, ok := rootValue.(map[string]any)
-	if !ok {
-		return StructureTemplate{}, fmt.Errorf("expected root compound payload")
+	return nbtReader.readStructureTemplate(0)
+}
+
+func (r structureTemplateNBTReader) readStructureTemplate(depth int) (StructureTemplate, error) {
+	if depth >= structureTemplateMaxDepth {
+		return StructureTemplate{}, fmt.Errorf("structure template NBT exceeded depth %d", structureTemplateMaxDepth)
 	}
 
 	var out StructureTemplate
-	sizeValues := anySlice(root["size"])
-	if len(sizeValues) >= 3 {
-		out.Size = [3]int{anyInt(sizeValues[0]), anyInt(sizeValues[1]), anyInt(sizeValues[2])}
-	}
+	paletteLoaded := false
+	for {
+		nextTag, err := r.readByte()
+		if err != nil {
+			return StructureTemplate{}, err
+		}
+		if nextTag == structureNBTTagEnd {
+			return out, nil
+		}
+		name, err := r.readString()
+		if err != nil {
+			return StructureTemplate{}, err
+		}
 
-	paletteValues := anySlice(root["palette"])
-	if len(paletteValues) == 0 {
-		if palettes := anySlice(root["palettes"]); len(palettes) > 0 {
-			paletteValues = anySlice(palettes[0])
+		switch name {
+		case "size":
+			out.Size, err = r.readStructureTemplateSize(nextTag, depth+1)
+		case "palette":
+			out.Palette, err = r.readStructureTemplatePalette(nextTag, depth+1)
+			paletteLoaded = len(out.Palette) != 0
+		case "palettes":
+			if paletteLoaded {
+				err = r.skipTagPayload(nextTag, depth+1)
+				break
+			}
+			out.Palette, err = r.readStructureTemplatePalettes(nextTag, depth+1)
+			paletteLoaded = len(out.Palette) != 0
+		case "blocks":
+			out.Blocks, err = r.readStructureTemplateBlocks(nextTag, depth+1)
+		default:
+			err = r.skipTagPayload(nextTag, depth+1)
+		}
+		if err != nil {
+			return StructureTemplate{}, err
 		}
 	}
-	out.Palette = make([]StructureTemplateBlockState, 0, len(paletteValues))
-	for _, value := range paletteValues {
-		entry := anyMap(value)
-		out.Palette = append(out.Palette, StructureTemplateBlockState{
-			Name:       anyString(entry["Name"]),
-			Properties: anyMap(entry["Properties"]),
-		})
-	}
+}
 
-	blockValues := anySlice(root["blocks"])
-	out.Blocks = make([]StructureTemplateBlock, 0, len(blockValues))
-	for _, value := range blockValues {
-		entry := anyMap(value)
-		posValues := anySlice(entry["pos"])
-		if len(posValues) < 3 {
-			continue
-		}
-		out.Blocks = append(out.Blocks, StructureTemplateBlock{
-			Pos:   [3]int{anyInt(posValues[0]), anyInt(posValues[1]), anyInt(posValues[2])},
-			State: anyInt(entry["state"]),
-			NBT:   anyMap(entry["nbt"]),
-		})
+func (r structureTemplateNBTReader) readStructureTemplateSize(tag byte, depth int) ([3]int, error) {
+	var out [3]int
+
+	values, err := r.readIntVector(tag, depth)
+	if err != nil {
+		return out, err
+	}
+	if len(values) >= 3 {
+		out = [3]int{values[0], values[1], values[2]}
 	}
 	return out, nil
+}
+
+func (r structureTemplateNBTReader) readStructureTemplatePalette(tag byte, depth int) ([]StructureTemplateBlockState, error) {
+	return r.readBlockStateListPayload(tag, depth)
+}
+
+func (r structureTemplateNBTReader) readStructureTemplatePalettes(tag byte, depth int) ([]StructureTemplateBlockState, error) {
+	if depth >= structureTemplateMaxDepth {
+		return nil, fmt.Errorf("structure template NBT exceeded depth %d", structureTemplateMaxDepth)
+	}
+	if tag != structureNBTTagList {
+		if err := r.skipTagPayload(tag, depth); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
+	elemTag, length, err := r.readListHeader()
+	if err != nil {
+		return nil, err
+	}
+	var palette []StructureTemplateBlockState
+	for i := int32(0); i < length; i++ {
+		if i == 0 {
+			palette, err = r.readBlockStateListPayload(elemTag, depth+1)
+		} else {
+			err = r.skipTagPayload(elemTag, depth+1)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return palette, nil
+}
+
+func (r structureTemplateNBTReader) readStructureTemplateBlocks(tag byte, depth int) ([]StructureTemplateBlock, error) {
+	if depth >= structureTemplateMaxDepth {
+		return nil, fmt.Errorf("structure template NBT exceeded depth %d", structureTemplateMaxDepth)
+	}
+	if tag != structureNBTTagList {
+		if err := r.skipTagPayload(tag, depth); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
+	elemTag, length, err := r.readListHeader()
+	if err != nil {
+		return nil, err
+	}
+	blocks := make([]StructureTemplateBlock, 0, length)
+	for i := int32(0); i < length; i++ {
+		block, ok, err := r.readStructureTemplateBlockPayload(elemTag, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			blocks = append(blocks, block)
+		}
+	}
+	return blocks, nil
+}
+
+func (r structureTemplateNBTReader) readBlockStateListPayload(tag byte, depth int) ([]StructureTemplateBlockState, error) {
+	if depth >= structureTemplateMaxDepth {
+		return nil, fmt.Errorf("structure template NBT exceeded depth %d", structureTemplateMaxDepth)
+	}
+	if tag != structureNBTTagList {
+		if err := r.skipTagPayload(tag, depth); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
+	elemTag, length, err := r.readListHeader()
+	if err != nil {
+		return nil, err
+	}
+	states := make([]StructureTemplateBlockState, 0, length)
+	for i := int32(0); i < length; i++ {
+		state, err := r.readStructureTemplateBlockStatePayload(elemTag, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		states = append(states, state)
+	}
+	return states, nil
+}
+
+func (r structureTemplateNBTReader) readStructureTemplateBlockStatePayload(tag byte, depth int) (StructureTemplateBlockState, error) {
+	if depth >= structureTemplateMaxDepth {
+		return StructureTemplateBlockState{}, fmt.Errorf("structure template NBT exceeded depth %d", structureTemplateMaxDepth)
+	}
+	if tag != structureNBTTagCompound {
+		if err := r.skipTagPayload(tag, depth); err != nil {
+			return StructureTemplateBlockState{}, err
+		}
+		return StructureTemplateBlockState{}, nil
+	}
+
+	var out StructureTemplateBlockState
+	for {
+		nextTag, err := r.readByte()
+		if err != nil {
+			return StructureTemplateBlockState{}, err
+		}
+		if nextTag == structureNBTTagEnd {
+			return out, nil
+		}
+		name, err := r.readString()
+		if err != nil {
+			return StructureTemplateBlockState{}, err
+		}
+
+		switch name {
+		case "Name":
+			if nextTag != structureNBTTagString {
+				if err := r.skipTagPayload(nextTag, depth+1); err != nil {
+					return StructureTemplateBlockState{}, err
+				}
+				continue
+			}
+			out.Name, err = r.readString()
+		case "Properties":
+			value, readErr := r.readTagPayload(nextTag, depth+1)
+			if readErr != nil {
+				return StructureTemplateBlockState{}, readErr
+			}
+			if properties, ok := value.(map[string]any); ok && len(properties) != 0 {
+				out.Properties = properties
+			}
+		default:
+			err = r.skipTagPayload(nextTag, depth+1)
+		}
+		if err != nil {
+			return StructureTemplateBlockState{}, err
+		}
+	}
+}
+
+func (r structureTemplateNBTReader) readStructureTemplateBlockPayload(tag byte, depth int) (StructureTemplateBlock, bool, error) {
+	if depth >= structureTemplateMaxDepth {
+		return StructureTemplateBlock{}, false, fmt.Errorf("structure template NBT exceeded depth %d", structureTemplateMaxDepth)
+	}
+	if tag != structureNBTTagCompound {
+		if err := r.skipTagPayload(tag, depth); err != nil {
+			return StructureTemplateBlock{}, false, err
+		}
+		return StructureTemplateBlock{}, false, nil
+	}
+
+	var (
+		out    StructureTemplateBlock
+		posSet bool
+	)
+	for {
+		nextTag, err := r.readByte()
+		if err != nil {
+			return StructureTemplateBlock{}, false, err
+		}
+		if nextTag == structureNBTTagEnd {
+			return out, posSet, nil
+		}
+		name, err := r.readString()
+		if err != nil {
+			return StructureTemplateBlock{}, false, err
+		}
+
+		switch name {
+		case "pos":
+			var values []int
+			values, err = r.readIntVector(nextTag, depth+1)
+			if err == nil && len(values) >= 3 {
+				out.Pos = [3]int{values[0], values[1], values[2]}
+				posSet = true
+			}
+		case "state":
+			out.State, err = r.readIntPayload(nextTag)
+		case "nbt":
+			value, readErr := r.readTagPayload(nextTag, depth+1)
+			if readErr != nil {
+				return StructureTemplateBlock{}, false, readErr
+			}
+			if nbt, ok := value.(map[string]any); ok && len(nbt) != 0 {
+				out.NBT = nbt
+			}
+		default:
+			err = r.skipTagPayload(nextTag, depth+1)
+		}
+		if err != nil {
+			return StructureTemplateBlock{}, false, err
+		}
+	}
+}
+
+func (r structureTemplateNBTReader) readIntVector(tag byte, depth int) ([]int, error) {
+	if depth >= structureTemplateMaxDepth {
+		return nil, fmt.Errorf("structure template NBT exceeded depth %d", structureTemplateMaxDepth)
+	}
+
+	switch tag {
+	case structureNBTTagList:
+		elemTag, length, err := r.readListHeader()
+		if err != nil {
+			return nil, err
+		}
+		out := make([]int, 0, length)
+		for i := int32(0); i < length; i++ {
+			value, err := r.readIntPayload(elemTag)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, value)
+		}
+		return out, nil
+	case structureNBTTagIntArray:
+		length, err := r.readInt32()
+		if err != nil {
+			return nil, err
+		}
+		if length < 0 {
+			return nil, fmt.Errorf("negative int array length %d", length)
+		}
+		out := make([]int, 0, length)
+		for i := int32(0); i < length; i++ {
+			value, err := r.readInt32()
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, int(value))
+		}
+		return out, nil
+	default:
+		if err := r.skipTagPayload(tag, depth); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+}
+
+func (r structureTemplateNBTReader) readListHeader() (byte, int32, error) {
+	elemTag, err := r.readByte()
+	if err != nil {
+		return 0, 0, err
+	}
+	length, err := r.readInt32()
+	if err != nil {
+		return 0, 0, err
+	}
+	if length < 0 {
+		return 0, 0, fmt.Errorf("negative list length %d", length)
+	}
+	return elemTag, length, nil
+}
+
+func (r structureTemplateNBTReader) readIntPayload(tag byte) (int, error) {
+	switch tag {
+	case structureNBTTagByte:
+		value, err := r.readByte()
+		return int(int8(value)), err
+	case structureNBTTagShort:
+		value, err := r.readInt16()
+		return int(value), err
+	case structureNBTTagInt:
+		value, err := r.readInt32()
+		return int(value), err
+	case structureNBTTagLong:
+		value, err := r.readInt64()
+		return int(value), err
+	default:
+		return 0, fmt.Errorf("expected integer tag, got %d", tag)
+	}
+}
+
+func (r structureTemplateNBTReader) skipTagPayload(tag byte, depth int) error {
+	if depth >= structureTemplateMaxDepth {
+		return fmt.Errorf("structure template NBT exceeded depth %d", structureTemplateMaxDepth)
+	}
+	switch tag {
+	case structureNBTTagEnd:
+		return nil
+	case structureNBTTagByte:
+		_, err := r.readByte()
+		return err
+	case structureNBTTagShort:
+		_, err := r.readInt16()
+		return err
+	case structureNBTTagInt:
+		_, err := r.readInt32()
+		return err
+	case structureNBTTagLong:
+		_, err := r.readInt64()
+		return err
+	case structureNBTTagFloat:
+		_, err := r.readFloat32()
+		return err
+	case structureNBTTagDouble:
+		_, err := r.readFloat64()
+		return err
+	case structureNBTTagByteArray:
+		length, err := r.readInt32()
+		if err != nil {
+			return err
+		}
+		_, err = r.readRaw(int(length))
+		return err
+	case structureNBTTagString:
+		_, err := r.readString()
+		return err
+	case structureNBTTagList:
+		elemTag, length, err := r.readListHeader()
+		if err != nil {
+			return err
+		}
+		for i := int32(0); i < length; i++ {
+			if err := r.skipTagPayload(elemTag, depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	case structureNBTTagCompound:
+		for {
+			nextTag, err := r.readByte()
+			if err != nil {
+				return err
+			}
+			if nextTag == structureNBTTagEnd {
+				return nil
+			}
+			if _, err := r.readString(); err != nil {
+				return err
+			}
+			if err := r.skipTagPayload(nextTag, depth+1); err != nil {
+				return err
+			}
+		}
+	case structureNBTTagIntArray:
+		length, err := r.readInt32()
+		if err != nil {
+			return err
+		}
+		if length < 0 {
+			return fmt.Errorf("negative int array length %d", length)
+		}
+		for i := int32(0); i < length; i++ {
+			if _, err := r.readInt32(); err != nil {
+				return err
+			}
+		}
+		return nil
+	case structureNBTTagLongArray:
+		length, err := r.readInt32()
+		if err != nil {
+			return err
+		}
+		if length < 0 {
+			return fmt.Errorf("negative long array length %d", length)
+		}
+		for i := int32(0); i < length; i++ {
+			if _, err := r.readInt64(); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported NBT tag %d", tag)
+	}
 }
 
 func (r structureTemplateNBTReader) readTagPayload(tag byte, depth int) (any, error) {
@@ -272,60 +652,4 @@ func (r structureTemplateNBTReader) readString() (string, error) {
 		return "", err
 	}
 	return string(data), nil
-}
-
-func anySlice(value any) []any {
-	switch v := value.(type) {
-	case []any:
-		return v
-	case []int32:
-		out := make([]any, len(v))
-		for i, value := range v {
-			out[i] = int64(value)
-		}
-		return out
-	case []int64:
-		out := make([]any, len(v))
-		for i, value := range v {
-			out[i] = value
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func anyMap(value any) map[string]any {
-	switch v := value.(type) {
-	case map[string]any:
-		return v
-	default:
-		return nil
-	}
-}
-
-func anyString(value any) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	case []byte:
-		return string(v)
-	default:
-		return ""
-	}
-}
-
-func anyInt(value any) int {
-	switch v := value.(type) {
-	case int:
-		return v
-	case int32:
-		return int(v)
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	default:
-		return 0
-	}
 }

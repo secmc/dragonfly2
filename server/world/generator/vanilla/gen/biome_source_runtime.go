@@ -119,8 +119,8 @@ func lookupPresetBiome(climate [6]int64, points []climateParameterPoint) Biome {
 	best := points[0]
 	bestFitness := climatePointFitness(climate, points[0])
 	for _, point := range points[1:] {
-		fitness := climatePointFitness(climate, point)
-		if fitness < bestFitness {
+		fitness, better := climatePointFitnessBelow(climate, point, bestFitness)
+		if better {
 			best = point
 			bestFitness = fitness
 		}
@@ -129,12 +129,55 @@ func lookupPresetBiome(climate [6]int64, points []climateParameterPoint) Biome {
 }
 
 func climatePointFitness(climate [6]int64, point climateParameterPoint) int64 {
-	var total int64
-	for i, value := range climate {
-		delta := point.params[i].distance(value)
-		total += delta * delta
+	total := point.offset * point.offset
+	total += climateDeltaSquared(climate[continentalnessIdx], point.params[continentalnessIdx])
+	total += climateDeltaSquared(climate[erosionIdx], point.params[erosionIdx])
+	total += climateDeltaSquared(climate[weirdnessIdx], point.params[weirdnessIdx])
+	total += climateDeltaSquared(climate[temperatureIdx], point.params[temperatureIdx])
+	total += climateDeltaSquared(climate[humidityIdx], point.params[humidityIdx])
+	total += climateDeltaSquared(climate[depthIdx], point.params[depthIdx])
+	return total
+}
+
+func climatePointFitnessBelow(climate [6]int64, point climateParameterPoint, limit int64) (int64, bool) {
+	total := point.offset * point.offset
+	if total >= limit {
+		return total, false
 	}
-	return total + point.offset*point.offset
+	total += climateDeltaSquared(climate[continentalnessIdx], point.params[continentalnessIdx])
+	if total >= limit {
+		return total, false
+	}
+	total += climateDeltaSquared(climate[erosionIdx], point.params[erosionIdx])
+	if total >= limit {
+		return total, false
+	}
+	total += climateDeltaSquared(climate[weirdnessIdx], point.params[weirdnessIdx])
+	if total >= limit {
+		return total, false
+	}
+	total += climateDeltaSquared(climate[temperatureIdx], point.params[temperatureIdx])
+	if total >= limit {
+		return total, false
+	}
+	total += climateDeltaSquared(climate[humidityIdx], point.params[humidityIdx])
+	if total >= limit {
+		return total, false
+	}
+	total += climateDeltaSquared(climate[depthIdx], point.params[depthIdx])
+	return total, total < limit
+}
+
+func climateDeltaSquared(value int64, parameter climateParameter) int64 {
+	if value < parameter.min {
+		delta := parameter.min - value
+		return delta * delta
+	}
+	if value > parameter.max {
+		delta := value - parameter.max
+		return delta * delta
+	}
+	return 0
 }
 
 var netherPresetPoints = []climateParameterPoint{

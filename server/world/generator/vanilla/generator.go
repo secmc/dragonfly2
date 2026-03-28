@@ -3,6 +3,7 @@ package vanilla
 import (
 	"fmt"
 	"sync"
+	"unsafe"
 
 	"github.com/df-mc/dragonfly/server/block"
 	"github.com/df-mc/dragonfly/server/block/cube"
@@ -13,6 +14,14 @@ import (
 
 const seaLevel = 63
 const featureStepCount = int(gen.GenerationStepTopLayerModification) + 1
+
+var (
+	sharedWorldgenOnce      sync.Once
+	sharedWorldgenRegistry  *gen.WorldgenRegistry
+	sharedStructureRegistry *gen.StructureTemplateRegistry
+	sharedStructureResolver *structureResolver
+	sharedPlannerCache      sync.Map
+)
 
 type Generator struct {
 	dimension          world.Dimension
@@ -33,6 +42,8 @@ type Generator struct {
 	structureStarts    *structureStartCache
 	surface            *gen.SurfaceRuntime
 	surfaceBlockCache  *blockRIDCache
+	templateBlockCache *stringRIDCache
+	blockNameCache     *runtimeIDNameCache
 	featureNoiseCache  *doublePerlinNoiseCache
 	finalDensityScalar gen.DensityScalarEvaluator
 	finalDensityVector gen.DensityVectorEvaluator
@@ -52,7 +63,7 @@ func New(seed int64) Generator {
 
 func NewForDimension(seed int64, dim world.Dimension) Generator {
 	noises := gen.NewNoiseRegistry(seed)
-	worldgen := gen.NewWorldgenRegistry()
+	worldgen, structureTemplates, structureResolver := sharedStructureResources()
 	dimensionName, graph, roots, surfaceRuntime, forceBottomBedrock, scalar, vector := dimensionRuntime(seed, dim, noises, worldgen)
 	biomeSource, err := gen.NewBiomeSource(seed, worldgen, dimensionName)
 	if err != nil {
@@ -65,9 +76,7 @@ func NewForDimension(seed int64, dim world.Dimension) Generator {
 	if err != nil {
 		panic(err)
 	}
-	structureTemplates := gen.NewStructureTemplateRegistry(worldgen)
-	structureResolver := newStructureResolver(worldgen, structureTemplates)
-	structurePlanners := buildStructurePlanners(worldgen, structureTemplates, dim)
+	structurePlanners := sharedStructurePlanners(worldgen, structureTemplates, dim)
 	carvers := gen.NewCarverRegistry()
 	features := gen.NewFeatureRegistry()
 	biomeGeneration := newBiomeGenerationIndex(features, carvers)
@@ -94,6 +103,8 @@ func NewForDimension(seed int64, dim world.Dimension) Generator {
 		structureStarts:    newStructureStartCache(),
 		surface:            surfaceRuntime,
 		surfaceBlockCache:  newBlockRIDCache(),
+		templateBlockCache: newStringRIDCache(),
+		blockNameCache:     newRuntimeIDNameCache(),
 		featureNoiseCache:  newDoublePerlinNoiseCache(),
 		finalDensityScalar: scalar,
 		finalDensityVector: vector,
@@ -106,6 +117,24 @@ func NewForDimension(seed int64, dim world.Dimension) Generator {
 		lavaRID:            world.BlockRuntimeID(block.Lava{Still: true, Depth: 8}),
 		forceBottomBedrock: forceBottomBedrock,
 	}
+}
+
+func sharedStructureResources() (*gen.WorldgenRegistry, *gen.StructureTemplateRegistry, *structureResolver) {
+	sharedWorldgenOnce.Do(func() {
+		sharedWorldgenRegistry = gen.NewWorldgenRegistry()
+		sharedStructureRegistry = gen.NewStructureTemplateRegistry(sharedWorldgenRegistry)
+		sharedStructureResolver = newStructureResolver(sharedWorldgenRegistry, sharedStructureRegistry)
+	})
+	return sharedWorldgenRegistry, sharedStructureRegistry, sharedStructureResolver
+}
+
+func sharedStructurePlanners(worldgen *gen.WorldgenRegistry, templates *gen.StructureTemplateRegistry, dim world.Dimension) []structurePlanner {
+	if planners, ok := sharedPlannerCache.Load(dim); ok {
+		return planners.([]structurePlanner)
+	}
+	planners := buildStructurePlanners(worldgen, templates, dim)
+	actual, _ := sharedPlannerCache.LoadOrStore(dim, planners)
+	return actual.([]structurePlanner)
 }
 
 func (g Generator) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
@@ -269,14 +298,14 @@ func runtimeIDForDimensionState(state gen.DimensionBlockState) uint32 {
 
 type blockRIDCache struct {
 	mu    sync.RWMutex
-	byKey map[string]uint32
+	byKey map[blockStateKey]uint32
 }
 
 func newBlockRIDCache() *blockRIDCache {
-	return &blockRIDCache{byKey: make(map[string]uint32)}
+	return &blockRIDCache{byKey: make(map[blockStateKey]uint32)}
 }
 
-func (c *blockRIDCache) Lookup(key string) (uint32, bool) {
+func (c *blockRIDCache) Lookup(key blockStateKey) (uint32, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -284,11 +313,75 @@ func (c *blockRIDCache) Lookup(key string) (uint32, bool) {
 	return rid, ok
 }
 
-func (c *blockRIDCache) Store(key string, rid uint32) {
+func (c *blockRIDCache) Store(key blockStateKey, rid uint32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.byKey[key] = rid
+}
+
+type runtimeIDNameCache struct {
+	mu    sync.RWMutex
+	byRID map[uint32]string
+}
+
+func newRuntimeIDNameCache() *runtimeIDNameCache {
+	return &runtimeIDNameCache{byRID: make(map[uint32]string)}
+}
+
+func (c *runtimeIDNameCache) Lookup(rid uint32) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	name, ok := c.byRID[rid]
+	return name, ok
+}
+
+func (c *runtimeIDNameCache) Store(rid uint32, name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.byRID[rid] = name
+}
+
+type stringRIDCache struct {
+	mu    sync.RWMutex
+	byKey map[string]uint32
+}
+
+func newStringRIDCache() *stringRIDCache {
+	return &stringRIDCache{byKey: make(map[string]uint32)}
+}
+
+func (c *stringRIDCache) Lookup(key string) (uint32, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	rid, ok := c.byKey[key]
+	return rid, ok
+}
+
+func (c *stringRIDCache) Store(key string, rid uint32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.byKey[key] = rid
+}
+
+type blockStateKey struct {
+	name       string
+	properties uintptr
+}
+
+func blockStateCacheKey(name string, properties map[string]string) blockStateKey {
+	if len(properties) == 0 {
+		return blockStateKey{name: name}
+	}
+	return blockStateKey{name: name, properties: mapIdentity(properties)}
+}
+
+func mapIdentity(m map[string]string) uintptr {
+	return *(*uintptr)(unsafe.Pointer(&m))
 }
 
 type doublePerlinNoiseCache struct {

@@ -1,6 +1,7 @@
 package vanilla
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"sync"
@@ -383,6 +384,46 @@ func TestRunPlacedFeatureNetherQuartzPlacesBlocks(t *testing.T) {
 	}
 }
 
+func TestCountOnEveryLayerPlacementFindsSuccessiveLayers(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := NewForDimension(0, world.Nether)
+	c := chunk.New(g.airRID, world.Nether.Range())
+	netherrackRID := world.BlockRuntimeID(block.Netherrack{})
+	for y := 0; y <= 29; y++ {
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, netherrackRID)
+			}
+		}
+	}
+	for y := 36; y <= 50; y++ {
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, netherrackRID)
+			}
+		}
+	}
+
+	var modifier gen.PlacementModifier
+	if err := json.Unmarshal([]byte(`{"count":1,"type":"minecraft:count_on_every_layer"}`), &modifier); err != nil {
+		t.Fatalf("decode count_on_every_layer modifier: %v", err)
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeNetherWastes)
+	positions, ok := g.applyPlacementModifiers(c, biomes, []cube.Pos{{0, c.Range().Min(), 0}}, []gen.PlacementModifier{modifier}, biomeKey(gen.BiomeNetherWastes), 0, 0, c.Range().Min(), c.Range().Max(), &rng)
+	if !ok {
+		t.Fatal("expected count_on_every_layer modifier to be supported")
+	}
+	if len(positions) != 2 {
+		t.Fatalf("expected one placement per exposed layer, got %d", len(positions))
+	}
+	if positions[0][1] != 51 || positions[1][1] != 30 {
+		t.Fatalf("expected layer placements at y=51 and y=30, got %v", positions)
+	}
+}
+
 func TestExecuteConfiguredOakTreeHasRoundedTop(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
@@ -413,10 +454,46 @@ func TestExecuteConfiguredOakTreeHasRoundedTop(t *testing.T) {
 	if cardinalLeaves < 3 {
 		t.Fatalf("expected oak canopy around top log to place cardinal leaves, got %d", cardinalLeaves)
 	}
-	for _, off := range []cube.Pos{{1, 0, 1}, {1, 0, -1}, {-1, 0, 1}, {-1, 0, -1}} {
-		if isLeafBlockAt(c, top.Add(off)) {
-			t.Fatalf("expected oak canopy diagonals around top log to be open, found leaves at %v", top.Add(off))
+	if !isLeafBlockAt(c, top.Side(cube.FaceUp)) {
+		t.Fatalf("expected oak canopy to place a leaf above the top log at %v", top.Side(cube.FaceUp))
+	}
+}
+
+func TestExecuteConfiguredOakTreeRejectsBlockedCanopy(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	buildSoil := func(c *chunk.Chunk) {
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Grass{}))
+			}
 		}
+	}
+
+	preview := chunk.New(g.airRID, cube.Range{-64, 319})
+	buildSoil(preview)
+	biomes := filledTestBiomeVolume(preview.Range().Min(), preview.Range().Max(), gen.BiomePlains)
+	previewRNG := gen.NewXoroshiro128FromSeed(1)
+	if !g.executeConfiguredFeature(preview, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "plains", 0, 0, preview.Range().Min(), preview.Range().Max(), &previewRNG, 0) {
+		t.Fatal("expected preview oak tree to place")
+	}
+	top, ok := highestTreeLog(preview)
+	if !ok {
+		t.Fatal("expected preview oak tree to contain a top log")
+	}
+
+	blocked := chunk.New(g.airRID, cube.Range{-64, 319})
+	buildSoil(blocked)
+	obstacle := top.Side(cube.FaceUp)
+	blocked.SetBlock(uint8(obstacle[0]), int16(obstacle[1]), uint8(obstacle[2]), 0, world.BlockRuntimeID(block.Stone{}))
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	if g.executeConfiguredFeature(blocked, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "plains", 0, 0, blocked.Range().Min(), blocked.Range().Max(), &rng, 0) {
+		t.Fatalf("expected blocked oak tree generation to fail when canopy space at %v is occupied", obstacle)
+	}
+	if countTreeBlocks(blocked) != 0 {
+		t.Fatal("expected blocked oak tree generation to leave the chunk unchanged")
 	}
 }
 
@@ -460,6 +537,47 @@ func TestHeightmapPlacementYCountsWaterAboveOceanFloor(t *testing.T) {
 	}
 	if depth := g.surfaceWaterDepthAt(c, 8, 8, c.Range().Min()); depth != 2 {
 		t.Fatalf("expected surface water depth 2, got %d", depth)
+	}
+}
+
+func TestExecuteLakeLavaRejectsWaterBoundary(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	stoneRID := world.BlockRuntimeID(block.Stone{})
+	for y := 0; y <= 24; y++ {
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, stoneRID)
+			}
+		}
+	}
+
+	pos := cube.Pos{8, 16, 8}
+	for x := 4; x <= 12; x++ {
+		for z := 4; z <= 12; z++ {
+			for y := pos[1] - 1; y <= pos[1]+2; y++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, g.waterRID)
+			}
+		}
+	}
+
+	feature, err := g.features.Configured("lake_lava")
+	if err != nil {
+		t.Fatalf("load lake_lava: %v", err)
+	}
+	cfg, err := feature.Lake()
+	if err != nil {
+		t.Fatalf("decode lake_lava: %v", err)
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	if g.executeLake(c, pos, cfg, 0, 0, c.Range().Min(), c.Range().Max(), &rng) {
+		t.Fatal("expected lava lake generation to abort when the cavity intersects water")
+	}
+	if c.Block(uint8(pos[0]), int16(pos[1]), uint8(pos[2]), 0) == g.lavaRID {
+		t.Fatal("expected no lava to be placed after lake validation failed")
 	}
 }
 

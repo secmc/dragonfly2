@@ -851,19 +851,46 @@ func (g Generator) executeLake(c *chunk.Chunk, pos cube.Pos, cfg gen.LakeConfig,
 		return false
 	}
 	barrier, barrierOK := g.selectState(c, cfg.Barrier, pos, rng, minY, maxY)
+	fluidBlock, ok := g.featureBlockFromState(fluid, nil)
+	if !ok {
+		return false
+	}
+	fluidRID := world.BlockRuntimeID(fluidBlock)
 
 	radiusX := 2 + int(rng.NextInt(3))
 	radiusZ := 2 + int(rng.NextInt(3))
 	depth := 2 + int(rng.NextInt(2))
 	var placedAny bool
 
+	for dx := -radiusX - 1; dx <= radiusX+1; dx++ {
+		for dz := -radiusZ - 1; dz <= radiusZ+1; dz++ {
+			for dy := -depth - 1; dy <= 1; dy++ {
+				candidate := pos.Add(cube.Pos{dx, dy, dz})
+				if !g.positionInChunk(candidate, chunkX, chunkZ, minY, maxY) || g.lakeInterior(radiusX, radiusZ, depth, dx, dy, dz) {
+					continue
+				}
+				if !g.lakeTouchesInterior(radiusX, radiusZ, depth, dx, dy, dz) {
+					continue
+				}
+
+				rid := g.columnScanRuntimeID(c, candidate[0]-chunkX*16, candidate[1], candidate[2]-chunkZ*16)
+				if dy > 0 {
+					if rid == g.waterRID || rid == g.lavaRID {
+						return false
+					}
+					continue
+				}
+				if !g.isSolidRID(rid) && rid != fluidRID {
+					return false
+				}
+			}
+		}
+	}
+
 	for dx := -radiusX; dx <= radiusX; dx++ {
 		for dz := -radiusZ; dz <= radiusZ; dz++ {
 			for dy := -depth; dy <= 1; dy++ {
-				nx := float64(dx) / float64(radiusX)
-				ny := float64(dy) / float64(depth)
-				nz := float64(dz) / float64(radiusZ)
-				if nx*nx+ny*ny+nz*nz > 1.0 {
+				if !g.lakeInterior(radiusX, radiusZ, depth, dx, dy, dz) {
 					continue
 				}
 
@@ -879,6 +906,7 @@ func (g Generator) executeLake(c *chunk.Chunk, pos cube.Pos, cfg gen.LakeConfig,
 					continue
 				}
 				c.SetBlock(uint8(candidate[0]&15), int16(candidate[1]), uint8(candidate[2]&15), 0, g.airRID)
+				c.SetBlock(uint8(candidate[0]&15), int16(candidate[1]), uint8(candidate[2]&15), 1, g.airRID)
 				placedAny = true
 			}
 		}
@@ -895,22 +923,36 @@ func (g Generator) executeLake(c *chunk.Chunk, pos cube.Pos, cfg gen.LakeConfig,
 				if !g.positionInChunk(candidate, chunkX, chunkZ, minY, maxY) {
 					continue
 				}
-				nx := float64(dx) / float64(radiusX+1)
-				ny := float64(dy) / float64(depth+1)
-				nz := float64(dz) / float64(radiusZ+1)
-				outer := nx*nx+ny*ny+nz*nz <= 1.0
-				inner := float64(dx*dx)/float64(radiusX*radiusX)+float64(dy*dy)/float64(depth*depth)+float64(dz*dz)/float64(radiusZ*radiusZ) <= 1.0
-				if !outer || inner {
+				if !g.lakeTouchesInterior(radiusX, radiusZ, depth, dx, dy, dz) || g.lakeInterior(radiusX, radiusZ, depth, dx, dy, dz) {
 					continue
 				}
-				rid := c.Block(uint8(candidate[0]&15), int16(candidate[1]), uint8(candidate[2]&15), 0)
-				if rid == g.airRID || rid == g.waterRID || rid == g.lavaRID {
+				if dy > 0 && rng.NextInt(2) == 0 {
+					continue
+				}
+				rid := g.columnScanRuntimeID(c, candidate[0]-chunkX*16, candidate[1], candidate[2]-chunkZ*16)
+				if g.isSolidRID(rid) {
 					_ = g.setBlockStateDirect(c, candidate, barrier)
 				}
 			}
 		}
 	}
 	return placedAny
+}
+
+func (g Generator) lakeInterior(radiusX, radiusZ, depth, dx, dy, dz int) bool {
+	nx := float64(dx) / float64(radiusX)
+	ny := float64(dy) / float64(depth)
+	nz := float64(dz) / float64(radiusZ)
+	return nx*nx+ny*ny+nz*nz <= 1.0
+}
+
+func (g Generator) lakeTouchesInterior(radiusX, radiusZ, depth, dx, dy, dz int) bool {
+	for _, off := range []cube.Pos{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}} {
+		if g.lakeInterior(radiusX, radiusZ, depth, dx+off[0], dy+off[1], dz+off[2]) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g Generator) executeFreezeTopLayer(c *chunk.Chunk, biomes sourceBiomeVolume, biomeKey string, _ gen.FreezeTopLayerConfig, chunkX, chunkZ, minY, maxY int) bool {
@@ -1019,6 +1061,10 @@ func (g Generator) executeTree(c *chunk.Chunk, pos cube.Pos, cfg gen.TreeConfig,
 	if !ok {
 		return false
 	}
+	trunkBlock, ok := g.featureBlockFromState(trunkState, nil)
+	if !ok {
+		return false
+	}
 	leafState, ok := g.selectState(c, cfg.FoliageProvider, pos, rng, minY, maxY)
 	if !ok {
 		return false
@@ -1028,11 +1074,17 @@ func (g Generator) executeTree(c *chunk.Chunk, pos cube.Pos, cfg gen.TreeConfig,
 	if height <= 0 {
 		return false
 	}
+	requestedHeight := height
+	sizeProfile := decodeTreeMinimumSize(cfg.MinimumSize)
+	height = g.maxFreeTreeHeight(c, pos, requestedHeight, sizeProfile, trunkBlock, minY, maxY)
+	if height <= 0 || (height < requestedHeight && (!sizeProfile.hasMinClippedSize || height < sizeProfile.minClippedHeight)) {
+		return false
+	}
 	if !g.prepareTreeSoil(c, pos, cfg, rng, minY, maxY) {
 		return false
 	}
 
-	var trunkTop cube.Pos
+	foliageTop := cube.Pos{}
 	doubleTrunk := false
 	switch trunkType {
 	case "straight_trunk_placer", "fancy_trunk_placer", "bending_trunk_placer", "cherry_trunk_placer", "upwards_branching_trunk_placer":
@@ -1040,29 +1092,32 @@ func (g Generator) executeTree(c *chunk.Chunk, pos cube.Pos, cfg gen.TreeConfig,
 		if !ok {
 			return false
 		}
-		trunkTop = top
+		foliageTop = top.Side(cube.FaceUp)
 	case "forking_trunk_placer":
 		top, ok := g.placeForkingAcaciaTrunk(c, pos, trunkState, height, rng, minY, maxY)
 		if !ok {
 			return false
 		}
-		trunkTop = top
+		foliageTop = top.Side(cube.FaceUp)
 	case "dark_oak_trunk_placer", "giant_trunk_placer", "mega_jungle_trunk_placer":
 		top, ok := g.placeWideTrunk(c, pos, trunkState, height, minY, maxY)
 		if !ok {
 			return false
 		}
-		trunkTop = top
 		doubleTrunk = true
+		foliageTop = top
+		if trunkType != "dark_oak_trunk_placer" {
+			foliageTop = top.Side(cube.FaceUp)
+		}
 	default:
 		return false
 	}
 
-	if !g.placeTreeFoliage(c, trunkTop, leafState, cfg.FoliagePlacer, height, doubleTrunk, rng, minY, maxY) {
+	if !g.placeTreeFoliage(c, foliageTop, leafState, cfg.FoliagePlacer, height, doubleTrunk, rng, minY, maxY) {
 		return false
 	}
 
-	trunkPositions, leafPositions := g.collectTreeStructure(c, pos, trunkTop, height)
+	trunkPositions, leafPositions := g.collectTreeStructure(c, pos, foliageTop, height)
 	g.applyTreeDecorators(c, pos, trunkPositions, leafPositions, cfg.Decorators, rng, minY, maxY)
 	return true
 }
@@ -1491,7 +1546,10 @@ func (g Generator) executeBasaltColumns(c *chunk.Chunk, pos cube.Pos, cfg gen.Ba
 				continue
 			}
 			base := pos.Add(cube.Pos{dx, 0, dz})
-			for base[1] > minY && c.Block(uint8(base[0]&15), int16(base[1]), uint8(base[2]&15), 0) == g.airRID {
+			if !g.positionInChunk(base, chunkX, chunkZ, minY, maxY) {
+				continue
+			}
+			for base[1] > minY && g.positionInChunk(base, chunkX, chunkZ, minY, maxY) && c.Block(uint8(base[0]&15), int16(base[1]), uint8(base[2]&15), 0) == g.airRID {
 				base = base.Side(cube.FaceDown)
 			}
 			if !supportsBasaltAnchorBlock(g.worldBlockAtChunkSafe(c, base, chunkX, chunkZ, minY, maxY)) {
@@ -2009,7 +2067,7 @@ func (g Generator) applyPlacementModifiers(c *chunk.Chunk, biomes sourceBiomeVol
 
 	for _, modifier := range modifiers {
 		switch modifier.Type {
-		case "count", "count_on_every_layer":
+		case "count":
 			cfg, err := modifier.Count()
 			if err != nil {
 				return nil, false
@@ -2018,6 +2076,32 @@ func (g Generator) applyPlacementModifiers(c *chunk.Chunk, biomes sourceBiomeVol
 			for _, pos := range out {
 				for i := 0; i < g.sampleIntProvider(cfg.Count, rng); i++ {
 					next = append(next, pos)
+				}
+			}
+			out = next
+		case "count_on_every_layer":
+			cfg, err := modifier.CountOnEveryLayer()
+			if err != nil {
+				return nil, false
+			}
+			next := make([]cube.Pos, 0, len(out))
+			for _, pos := range out {
+				for layer := 0; ; layer++ {
+					foundAny := false
+					attempts := g.sampleIntProvider(cfg.Count, rng)
+					for i := 0; i < attempts; i++ {
+						localX := int(rng.NextInt(16))
+						localZ := int(rng.NextInt(16))
+						y, ok := g.findCountOnEveryLayerY(c, localX, localZ, layer, minY, maxY)
+						if !ok {
+							continue
+						}
+						next = append(next, cube.Pos{pos[0] + localX, y, pos[2] + localZ})
+						foundAny = true
+					}
+					if !foundAny {
+						break
+					}
 				}
 			}
 			out = next
@@ -2189,6 +2273,31 @@ func (g Generator) applyPlacementModifiers(c *chunk.Chunk, biomes sourceBiomeVol
 	return out, true
 }
 
+func (g Generator) findCountOnEveryLayerY(c *chunk.Chunk, localX, localZ, layer, minY, maxY int) (int, bool) {
+	if localX < 0 || localX >= 16 || localZ < 0 || localZ >= 16 {
+		return 0, false
+	}
+	startY := clamp(g.heightmapPlacementY(c, localX, localZ, "MOTION_BLOCKING", minY, maxY), minY, maxY)
+	currentRID := g.columnScanRuntimeID(c, localX, startY, localZ)
+	currentLayer := 0
+
+	for y := startY; y >= minY+1; y-- {
+		belowRID := g.columnScanRuntimeID(c, localX, y-1, localZ)
+		if !g.countOnEveryLayerEmptyRID(belowRID) && g.countOnEveryLayerEmptyRID(currentRID) && belowRID != g.bedrockRID {
+			if currentLayer == layer {
+				return y, true
+			}
+			currentLayer++
+		}
+		currentRID = belowRID
+	}
+	return 0, false
+}
+
+func (g Generator) countOnEveryLayerEmptyRID(rid uint32) bool {
+	return rid == g.airRID || rid == g.waterRID || rid == g.lavaRID
+}
+
 func (g Generator) placeStateProviderBlock(c *chunk.Chunk, pos cube.Pos, provider gen.StateProvider, rng *gen.Xoroshiro128, minY, maxY int) bool {
 	state, ok := g.selectState(c, provider, pos, rng, minY, maxY)
 	if !ok {
@@ -2282,7 +2391,7 @@ func (g Generator) placeFeatureState(c *chunk.Chunk, pos cube.Pos, state gen.Blo
 		return false
 	}
 
-	if !g.canBlockStateSurvive(c, pos, state, rng, minY, maxY) {
+	if !g.canFeatureBlockSurvive(c, pos, featureBlock, state.Name, minY, maxY) {
 		return false
 	}
 
@@ -2386,7 +2495,7 @@ func parseStateInt(properties map[string]string, key string) int {
 
 func normalizeFeatureState(state gen.BlockState) gen.BlockState {
 	state.Name = normalizeFeatureStateName(state.Name)
-	if len(state.Properties) == 0 {
+	if len(state.Properties) == 0 || !featureStateNeedsPropertyNormalization(state.Name, state.Properties) {
 		return state
 	}
 
@@ -2424,6 +2533,39 @@ func normalizeFeatureState(state gen.BlockState) gen.BlockState {
 		state.Properties = props
 	}
 	return state
+}
+
+func featureStateNeedsPropertyNormalization(name string, properties map[string]string) bool {
+	switch {
+	case strings.HasSuffix(name, "_log"),
+		strings.HasSuffix(name, "_wood"),
+		strings.HasSuffix(name, "_stem"),
+		strings.HasSuffix(name, "_hyphae"),
+		name == "muddy_mangrove_roots",
+		name == "basalt",
+		name == "deepslate":
+		_, ok := properties["axis"]
+		return ok
+	case strings.HasSuffix(name, "_leaves"),
+		name == "azalea_leaves",
+		name == "azalea_leaves_flowered":
+		if _, ok := properties["persistent"]; ok {
+			return true
+		}
+		if _, ok := properties["distance"]; ok {
+			return true
+		}
+		if _, ok := properties["waterlogged"]; ok {
+			return true
+		}
+		_, ok := properties["update_bit"]
+		return !ok
+	case name == "hanging_roots":
+		_, ok := properties["waterlogged"]
+		return ok
+	default:
+		return false
+	}
 }
 
 func normalizeFeatureStateName(name string) string {
@@ -2744,12 +2886,17 @@ func (g Generator) testBlockPredicate(c *chunk.Chunk, pos cube.Pos, predicate ge
 
 func (g Generator) blockNameAt(c *chunk.Chunk, pos cube.Pos) string {
 	rid := c.Block(uint8(pos[0]&15), int16(pos[1]), uint8(pos[2]&15), 0)
+	if name, ok := g.blockNameCache.Lookup(rid); ok {
+		return name
+	}
 	featureBlock, ok := world.BlockByRuntimeID(rid)
 	if !ok {
 		return "air"
 	}
 	name, _ := featureBlock.EncodeBlock()
-	return strings.TrimPrefix(name, "minecraft:")
+	name = strings.TrimPrefix(name, "minecraft:")
+	g.blockNameCache.Store(rid, name)
+	return name
 }
 
 func (g Generator) blockNameAtSafe(c *chunk.Chunk, pos cube.Pos, chunkX, chunkZ, minY, maxY int) string {
@@ -2809,6 +2956,9 @@ func supportsWeepingVinesBlock(b world.Block) bool {
 }
 
 func supportsBasaltAnchorBlock(b world.Block) bool {
+	if b == nil {
+		return false
+	}
 	switch b.(type) {
 	case block.Netherrack, block.Basalt, block.Blackstone, block.SoulSoil, block.SoulSand:
 		return true
@@ -3193,6 +3343,117 @@ func sampleTreeHeight(placer gen.TypedJSONValue, rng *gen.Xoroshiro128) (int, st
 		height += int(rng.NextInt(uint32(raw.HeightRandB + 1)))
 	}
 	return height, placer.Type
+}
+
+type treeMinimumSizeProfile struct {
+	kind              string
+	limit             int
+	upperLimit        int
+	lowerSize         int
+	middleSize        int
+	upperSize         int
+	minClippedHeight  int
+	hasMinClippedSize bool
+}
+
+func decodeTreeMinimumSize(value gen.TypedJSONValue) treeMinimumSizeProfile {
+	profile := treeMinimumSizeProfile{
+		kind:      value.Type,
+		upperSize: 1,
+	}
+	switch value.Type {
+	case "three_layers_feature_size":
+		var raw struct {
+			Limit            int  `json:"limit"`
+			UpperLimit       int  `json:"upper_limit"`
+			LowerSize        int  `json:"lower_size"`
+			MiddleSize       int  `json:"middle_size"`
+			UpperSize        int  `json:"upper_size"`
+			MinClippedHeight *int `json:"min_clipped_height"`
+		}
+		if err := json.Unmarshal(value.Data, &raw); err != nil {
+			return profile
+		}
+		profile.limit = raw.Limit
+		profile.upperLimit = raw.UpperLimit
+		profile.lowerSize = raw.LowerSize
+		profile.middleSize = raw.MiddleSize
+		profile.upperSize = raw.UpperSize
+		if raw.MinClippedHeight != nil {
+			profile.minClippedHeight = *raw.MinClippedHeight
+			profile.hasMinClippedSize = true
+		}
+	default:
+		var raw struct {
+			Limit            int  `json:"limit"`
+			LowerSize        int  `json:"lower_size"`
+			UpperSize        int  `json:"upper_size"`
+			MinClippedHeight *int `json:"min_clipped_height"`
+		}
+		if err := json.Unmarshal(value.Data, &raw); err != nil {
+			return profile
+		}
+		profile.kind = "two_layers_feature_size"
+		profile.limit = raw.Limit
+		profile.lowerSize = raw.LowerSize
+		profile.upperSize = raw.UpperSize
+		if raw.MinClippedHeight != nil {
+			profile.minClippedHeight = *raw.MinClippedHeight
+			profile.hasMinClippedSize = true
+		}
+	}
+	if !profile.hasMinClippedSize {
+		profile.minClippedHeight = 0
+	}
+	return profile
+}
+
+func (p treeMinimumSizeProfile) sizeAtHeight(treeHeight, y int) int {
+	switch p.kind {
+	case "three_layers_feature_size":
+		if y < p.limit {
+			return p.lowerSize
+		}
+		if y >= treeHeight-p.upperLimit {
+			return p.upperSize
+		}
+		return p.middleSize
+	default:
+		if y < p.limit {
+			return p.lowerSize
+		}
+		return p.upperSize
+	}
+}
+
+func (g Generator) maxFreeTreeHeight(c *chunk.Chunk, origin cube.Pos, maxTreeHeight int, sizeProfile treeMinimumSizeProfile, trunkBlock world.Block, minY, maxY int) int {
+	chunkX := floorDiv(origin[0], 16)
+	chunkZ := floorDiv(origin[2], 16)
+	for y := 0; y <= maxTreeHeight+1; y++ {
+		radius := sizeProfile.sizeAtHeight(maxTreeHeight, y)
+		for dx := -radius; dx <= radius; dx++ {
+			for dz := -radius; dz <= radius; dz++ {
+				candidate := origin.Add(cube.Pos{dx, y, dz})
+				if !g.positionInChunk(candidate, chunkX, chunkZ, minY, maxY) || !g.canTreeGrowInto(c, candidate, trunkBlock) {
+					return y - 2
+				}
+			}
+		}
+	}
+	return maxTreeHeight
+}
+
+func (g Generator) canTreeGrowInto(c *chunk.Chunk, pos cube.Pos, trunkBlock world.Block) bool {
+	rid := c.Block(uint8(pos[0]&15), int16(pos[1]), uint8(pos[2]&15), 0)
+	if rid == g.airRID || g.isLeafRID(rid) {
+		return true
+	}
+	currentBlock, _ := world.BlockByRuntimeID(rid)
+	if g.canReplaceFeatureBlock(currentBlock, trunkBlock) {
+		return true
+	}
+	name := g.blockNameAt(c, pos)
+	return strings.HasSuffix(name, "_log") || strings.HasSuffix(name, "_wood") || strings.HasSuffix(name, "_stem")
 }
 
 func (g Generator) prepareTreeSoil(c *chunk.Chunk, pos cube.Pos, cfg gen.TreeConfig, rng *gen.Xoroshiro128, minY, maxY int) bool {

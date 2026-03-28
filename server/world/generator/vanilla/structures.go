@@ -3,7 +3,6 @@ package vanilla
 import (
 	"fmt"
 	"hash/fnv"
-	"math"
 	"sort"
 	"sync"
 
@@ -383,13 +382,9 @@ func (g Generator) planStructureStart(planner structurePlanner, startChunk world
 
 	startX := int(startChunk[0]) * 16
 	startZ := int(startChunk[1]) * 16
-	surfaceY := g.preliminarySurfaceLevelAt(startX+8, startZ+8, minY, maxY)
-	if surfaceY < minY {
-		surfaceY = minY
-	}
-	if surfaceY > maxY {
-		surfaceY = maxY
-	}
+	surfaceSampler := newStructureHeightSampler(g, minY, maxY)
+	surfaceHeightmapY := surfaceSampler.worldSurfaceLevelAt(startX+8, startZ+8)
+	surfaceY := clamp(surfaceHeightmapY-1, minY, maxY)
 	surfaceBiome := g.biomeSource.GetBiome(startX+8, surfaceY, startZ+8)
 
 	candidate, ok := g.chooseStructureForPlanner(planner, surfaceBiome, startChunk)
@@ -414,9 +409,9 @@ func (g Generator) planStructureStart(planner structurePlanner, startChunk world
 			return plannedStructureStart{}, false
 		}
 		templateName = startTemplate.name
-		pieces, overallBounds, rootOrigin, rootSize, okBuild = g.buildPlannedStructure(candidate, startTemplate, startX, startZ, minY, maxY, &rng)
+		pieces, overallBounds, rootOrigin, rootSize, okBuild = g.buildPlannedStructure(candidate, startTemplate, startX, startZ, surfaceSampler, &rng)
 	} else {
-		templateName, pieces, overallBounds, rootOrigin, rootSize, okBuild = g.buildPlannedDirectStructure(candidate, planner.placement, startChunk, startX, startZ, surfaceY, minY, maxY, &rng)
+		templateName, pieces, overallBounds, rootOrigin, rootSize, okBuild = g.buildPlannedDirectStructure(candidate, planner.placement, startChunk, startX, startZ, surfaceY, surfaceSampler, &rng)
 	}
 	if !okBuild || len(pieces) == 0 {
 		g.structureStarts.Store(cacheKey, plannedStructureStart{}, false)
@@ -527,7 +522,7 @@ func chooseStartTemplate(candidate structurePlannerCandidate, rng *gen.Xoroshiro
 func (g Generator) resolveJigsawStartY(def gen.JigsawStructureDef, blockX, blockZ, minY, maxY int, rng *gen.Xoroshiro128) int {
 	base := g.sampleStructureHeightProvider(def.StartHeight, minY, maxY, rng)
 	if def.ProjectStartToHeight != "" {
-		return g.preliminarySurfaceLevelAt(blockX, blockZ, minY, maxY) + base
+		return g.worldSurfaceLevelAt(blockX, blockZ, minY, maxY) + base
 	}
 	return base
 }
@@ -560,25 +555,11 @@ func resolveVerticalAnchor(anchor gen.VerticalAnchor, minY, maxY int) int {
 }
 
 func (g Generator) preliminarySurfaceLevelAt(blockX, blockZ, minY, maxY int) int {
-	chunkX := floorDiv(blockX, 16)
-	chunkZ := floorDiv(blockZ, 16)
-	flat := g.graph.NewFlatCacheGrid(chunkX, chunkZ, g.noises)
-	col := g.graph.NewColumnContext(blockX, blockZ, g.noises, flat)
-	ctx := gen.FunctionContext{BlockX: blockX, BlockY: 0, BlockZ: blockZ}
-	value := 0.0
-	if g.dimension == world.Overworld {
-		value = gen.ComputePreliminarySurfaceLevel(ctx, g.noises, flat, col)
-	} else {
-		value = g.graph.Eval(g.rootIndex("preliminary_surface_level"), ctx, g.noises, flat, col, nil)
-	}
-	y := int(math.Floor(value))
-	if y < minY {
-		return minY
-	}
-	if y > maxY {
-		return maxY
-	}
-	return y
+	return newStructureHeightSampler(g, minY, maxY).preliminarySurfaceLevelAt(blockX, blockZ)
+}
+
+func (g Generator) worldSurfaceLevelAt(blockX, blockZ, minY, maxY int) int {
+	return newStructureHeightSampler(g, minY, maxY).worldSurfaceLevelAt(blockX, blockZ)
 }
 
 func structureIntersectsChunk(start plannedStructureStart, chunkX, chunkZ, minY, maxY int) bool {
@@ -667,7 +648,7 @@ func (g Generator) placeStructureBlockState(c *chunk.Chunk, chunkX, chunkZ, minY
 
 func (g Generator) lookupTemplateBlock(name string, properties map[string]any) (uint32, bool) {
 	key := templateBlockCacheKey(name, properties)
-	if rid, ok := g.surfaceBlockCache.Lookup(key); ok {
+	if rid, ok := g.templateBlockCache.Lookup(key); ok {
 		return rid, true
 	}
 
@@ -690,7 +671,7 @@ func (g Generator) lookupTemplateBlock(name string, properties map[string]any) (
 	if !ok {
 		return 0, false
 	}
-	g.surfaceBlockCache.Store(key, rid)
+	g.templateBlockCache.Store(key, rid)
 	return rid, true
 }
 

@@ -1,9 +1,7 @@
 package vanilla
 
 import (
-	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/df-mc/dragonfly/server/world/chunk"
@@ -190,7 +188,7 @@ func (s *surfaceColumnScratch) slices(columnHeight int) ([]int, []int, []int) {
 }
 
 func (g Generator) lookupSurfaceBlock(name string, properties map[string]string) uint32 {
-	key := surfaceBlockCacheKey(name, properties)
+	key := blockStateCacheKey(name, properties)
 	if rid, ok := g.surfaceBlockCache.Lookup(key); ok {
 		return rid
 	}
@@ -247,29 +245,6 @@ func (g Generator) lookupRegisteredSurfaceBlock(name string, properties map[stri
 		return 0, false
 	}
 	return world.BlockRuntimeID(b), true
-}
-
-func surfaceBlockCacheKey(name string, properties map[string]string) string {
-	if len(properties) == 0 {
-		return name
-	}
-
-	keys := make([]string, 0, len(properties))
-	for key := range properties {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	var b strings.Builder
-	b.Grow(len(name) + len(keys)*16)
-	b.WriteString(name)
-	for _, key := range keys {
-		b.WriteByte('|')
-		b.WriteString(key)
-		b.WriteByte('=')
-		b.WriteString(properties[key])
-	}
-	return b.String()
 }
 
 func (g Generator) isSurfaceBaseRID(rid uint32) bool {

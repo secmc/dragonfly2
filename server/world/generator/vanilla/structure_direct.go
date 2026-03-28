@@ -184,32 +184,33 @@ func (g Generator) buildPlannedDirectStructure(
 	candidate structurePlannerCandidate,
 	placement gen.RandomSpreadPlacement,
 	startChunk world.ChunkPos,
-	startX, startZ, surfaceY, minY, maxY int,
+	startX, startZ, surfaceY int,
+	surfaceSampler *structureHeightSampler,
 	rng *gen.Xoroshiro128,
 ) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
 	switch candidate.structureType {
 	case "igloo":
-		return g.buildIglooStructure(startX, startZ, minY, maxY, rng)
+		return g.buildIglooStructure(startX, startZ, surfaceSampler, rng)
 	case "shipwreck":
-		return g.buildShipwreckStructure(candidate.shipwreck, startX, startZ, minY, maxY, rng)
+		return g.buildShipwreckStructure(candidate.shipwreck, startX, startZ, surfaceSampler, rng)
 	case "ocean_ruin":
-		return g.buildOceanRuinStructure(candidate.oceanRuin, startX, startZ, minY, maxY, rng)
+		return g.buildOceanRuinStructure(candidate.oceanRuin, startX, startZ, surfaceSampler, rng)
 	case "ruined_portal":
-		return g.buildRuinedPortalStructure(candidate.ruinedPortal, startX, startZ, minY, maxY, rng)
+		return g.buildRuinedPortalStructure(candidate.ruinedPortal, startX, startZ, surfaceSampler, rng)
 	case "buried_treasure":
-		return g.buildBuriedTreasureStructure(startX, startZ, minY, maxY, placement)
+		return g.buildBuriedTreasureStructure(startX, startZ, surfaceSampler, placement)
 	case "swamp_hut":
-		return g.buildSwampHutStructure(startChunk, startX, startZ, surfaceY, minY, maxY, rng)
+		return g.buildSwampHutStructure(startChunk, startX, startZ, surfaceY, surfaceSampler, rng)
 	case "nether_fossil":
-		return g.buildNetherFossilStructure(candidate.netherFossil, startX, startZ, minY, maxY, rng)
+		return g.buildNetherFossilStructure(candidate.netherFossil, startX, startZ, surfaceSampler, rng)
 	case "end_city":
-		return g.buildEndCityStructure(startChunk, startX, startZ, minY, maxY, rng)
+		return g.buildEndCityStructure(startChunk, startX, startZ, surfaceSampler, rng)
 	default:
 		return "", nil, emptyStructureBox(), cube.Pos{}, [3]int{}, false
 	}
 }
 
-func (g Generator) buildIglooStructure(startX, startZ, minY, maxY int, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
+func (g Generator) buildIglooStructure(startX, startZ int, surfaceSampler *structureHeightSampler, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
 	position := cube.Pos{startX, 90, startZ}
 	rotation := randomStructureRotation(rng)
 
@@ -218,7 +219,7 @@ func (g Generator) buildIglooStructure(startX, startZ, minY, maxY int, rng *gen.
 		return "", nil, emptyStructureBox(), cube.Pos{}, [3]int{}, false
 	}
 	entrance := structureTemplateWorldPos(position, [3]int{3, 0, 5}, rotation, structureMirrorNone, cube.Pos{3, 5, 5})
-	deltaY := g.preliminarySurfaceLevelAt(entrance[0], entrance[2], minY, maxY) - 91
+	deltaY := surfaceSampler.preliminarySurfaceLevelAt(entrance[0], entrance[2]) - 91
 
 	translate := cube.Pos{0, deltaY, 0}
 	topPiece.origin = topPiece.origin.Add(translate)
@@ -250,7 +251,7 @@ func (g Generator) buildIglooStructure(startX, startZ, minY, maxY int, rng *gen.
 	return "igloo/top", pieces, overall, rootOrigin, rootSize, true
 }
 
-func (g Generator) buildShipwreckStructure(def gen.ShipwreckStructureDef, startX, startZ, minY, maxY int, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
+func (g Generator) buildShipwreckStructure(def gen.ShipwreckStructureDef, startX, startZ int, surfaceSampler *structureHeightSampler, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
 	templates := shipwreckOceanTemplates
 	if def.IsBeached {
 		templates = shipwreckBeachedTemplates
@@ -266,9 +267,9 @@ func (g Generator) buildShipwreckStructure(def gen.ShipwreckStructureDef, startX
 		return "", nil, emptyStructureBox(), cube.Pos{}, [3]int{}, false
 	}
 
-	targetY := g.sampleTemplateMeanY(piece.bounds, minY, maxY)
+	targetY := g.sampleTemplateMeanY(piece.bounds, surfaceSampler)
 	if def.IsBeached {
-		targetY = g.sampleTemplateMinY(piece.bounds, minY, maxY) - piece.bounds.originAndSizeY()/2 - int(rng.NextInt(3))
+		targetY = g.sampleTemplateMinY(piece.bounds, surfaceSampler) - piece.bounds.originAndSizeY()/2 - int(rng.NextInt(3))
 	}
 	translate := cube.Pos{0, targetY - piece.bounds.minY, 0}
 	piece.origin = piece.origin.Add(translate)
@@ -277,7 +278,7 @@ func (g Generator) buildShipwreckStructure(def gen.ShipwreckStructureDef, startX
 	return templateName, []plannedStructurePiece{piece}, piece.bounds, rootOrigin, rootSize, true
 }
 
-func (g Generator) buildOceanRuinStructure(def gen.OceanRuinStructureDef, startX, startZ, minY, maxY int, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
+func (g Generator) buildOceanRuinStructure(def gen.OceanRuinStructureDef, startX, startZ int, surfaceSampler *structureHeightSampler, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
 	position := cube.Pos{startX + 8, 90, startZ + 8}
 	rotation := randomStructureRotation(rng)
 	isLarge := rng.NextDouble() <= def.LargeProbability
@@ -292,7 +293,7 @@ func (g Generator) buildOceanRuinStructure(def gen.OceanRuinStructureDef, startX
 	}
 	overall := emptyStructureBox()
 	for i := range pieces {
-		targetY := g.sampleTemplateFloorY(pieces[i].bounds, minY, maxY)
+		targetY := g.sampleTemplateFloorY(pieces[i].bounds, surfaceSampler)
 		translate := cube.Pos{0, targetY - pieces[i].bounds.minY, 0}
 		pieces[i].origin = pieces[i].origin.Add(translate)
 		pieces[i].bounds = shiftStructureBox(pieces[i].bounds, translate)
@@ -306,7 +307,7 @@ func (g Generator) buildOceanRuinStructure(def gen.OceanRuinStructureDef, startX
 				continue
 			}
 			for i := range clusterPieces {
-				targetY := g.sampleTemplateFloorY(clusterPieces[i].bounds, minY, maxY)
+				targetY := g.sampleTemplateFloorY(clusterPieces[i].bounds, surfaceSampler)
 				translate := cube.Pos{0, targetY - clusterPieces[i].bounds.minY, 0}
 				clusterPieces[i].origin = clusterPieces[i].origin.Add(translate)
 				clusterPieces[i].bounds = shiftStructureBox(clusterPieces[i].bounds, translate)
@@ -322,7 +323,7 @@ func (g Generator) buildOceanRuinStructure(def gen.OceanRuinStructureDef, startX
 	return firstTemplate, pieces, overall, rootOrigin, rootSize, true
 }
 
-func (g Generator) buildRuinedPortalStructure(def gen.RuinedPortalStructureDef, startX, startZ, minY, maxY int, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
+func (g Generator) buildRuinedPortalStructure(def gen.RuinedPortalStructureDef, startX, startZ int, surfaceSampler *structureHeightSampler, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
 	if len(def.Setups) == 0 {
 		return "", nil, emptyStructureBox(), cube.Pos{}, [3]int{}, false
 	}
@@ -346,9 +347,9 @@ func (g Generator) buildRuinedPortalStructure(def gen.RuinedPortalStructureDef, 
 	bounds := structureTemplateWorldBox(template, reference, rotation, mirror, pivot)
 	centerX := (bounds.minX + bounds.maxX) / 2
 	centerZ := (bounds.minZ + bounds.maxZ) / 2
-	surfaceY := g.preliminarySurfaceLevelAt(centerX, centerZ, minY, maxY) - 1
+	surfaceY := surfaceSampler.preliminarySurfaceLevelAt(centerX, centerZ) - 1
 	ySpan := bounds.maxY - bounds.minY + 1
-	reference[1] = ruinedPortalTargetY(setup.Placement, surfaceY, ySpan, minY, maxY, rng)
+	reference[1] = ruinedPortalTargetY(setup.Placement, surfaceY, ySpan, surfaceSampler.minY, surfaceSampler.maxY, rng)
 
 	piece, ok := g.newTemplateStructurePiece(templateName, reference, rotation, mirror, pivot, true, nil)
 	if !ok {
@@ -358,10 +359,10 @@ func (g Generator) buildRuinedPortalStructure(def gen.RuinedPortalStructureDef, 
 	return templateName, []plannedStructurePiece{piece}, piece.bounds, rootOrigin, rootSize, true
 }
 
-func (g Generator) buildBuriedTreasureStructure(startX, startZ, minY, maxY int, placement gen.RandomSpreadPlacement) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
-	chestPos := cube.Pos{startX + 9, g.preliminarySurfaceLevelAt(startX+9, startZ+9, minY, maxY) - 1, startZ + 9}
-	if chestPos[1] <= minY {
-		chestPos[1] = minY + 1
+func (g Generator) buildBuriedTreasureStructure(startX, startZ int, surfaceSampler *structureHeightSampler, placement gen.RandomSpreadPlacement) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
+	chestPos := cube.Pos{startX + 9, surfaceSampler.preliminarySurfaceLevelAt(startX+9, startZ+9) - 1, startZ + 9}
+	if chestPos[1] <= surfaceSampler.minY {
+		chestPos[1] = surfaceSampler.minY + 1
 	}
 	sand := gen.BlockState{Name: "sand"}
 	stone := gen.BlockState{Name: "stone"}
@@ -384,15 +385,15 @@ func (g Generator) buildBuriedTreasureStructure(startX, startZ, minY, maxY int, 
 	return "buried_treasure", []plannedStructurePiece{piece}, box, rootOrigin, rootSize, true
 }
 
-func (g Generator) buildSwampHutStructure(startChunk world.ChunkPos, startX, startZ, surfaceY, minY, maxY int, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
+func (g Generator) buildSwampHutStructure(startChunk world.ChunkPos, startX, startZ, surfaceY int, surfaceSampler *structureHeightSampler, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
 	_ = startChunk
 	baseY := surfaceY
-	if baseY < minY+1 {
-		baseY = minY + 1
+	if baseY < surfaceSampler.minY+1 {
+		baseY = surfaceSampler.minY + 1
 	}
 	rotation := randomStructureRotation(rng)
 	origin := cube.Pos{startX, baseY, startZ}
-	blocks := buildSwampHutBlocks(origin, rotation, g, minY, maxY)
+	blocks := buildSwampHutBlocks(origin, rotation, g, surfaceSampler)
 	if len(blocks) == 0 {
 		return "", nil, emptyStructureBox(), cube.Pos{}, [3]int{}, false
 	}
@@ -405,11 +406,11 @@ func (g Generator) buildSwampHutStructure(startChunk world.ChunkPos, startX, sta
 	return "swamp_hut", []plannedStructurePiece{piece}, box, rootOrigin, rootSize, true
 }
 
-func (g Generator) buildNetherFossilStructure(def gen.NetherFossilStructureDef, startX, startZ, minY, maxY int, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
+func (g Generator) buildNetherFossilStructure(def gen.NetherFossilStructureDef, startX, startZ int, surfaceSampler *structureHeightSampler, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
 	blockX := startX + int(rng.NextInt(16))
 	blockZ := startZ + int(rng.NextInt(16))
 	seaLevel := g.metadata.SeaLevel
-	y := clamp(g.sampleStructureHeightProvider(def.Height, minY, maxY, rng), minY+1, maxY)
+	y := clamp(g.sampleStructureHeightProvider(def.Height, surfaceSampler.minY, surfaceSampler.maxY, rng), surfaceSampler.minY+1, surfaceSampler.maxY)
 	for y > seaLevel {
 		current := g.sampleStructureSubstanceAt(blockX, y, blockZ)
 		below := g.sampleStructureSubstanceAt(blockX, y-1, blockZ)
@@ -509,26 +510,26 @@ func (b structureBox) originAndSizeY() int {
 	return b.maxY - b.minY + 1
 }
 
-func (g Generator) sampleTemplateMeanY(box structureBox, minY, maxY int) int {
+func (g Generator) sampleTemplateMeanY(box structureBox, surfaceSampler *structureHeightSampler) int {
 	total := 0
 	count := 0
 	for x := box.minX; x <= box.maxX; x++ {
 		for z := box.minZ; z <= box.maxZ; z++ {
-			total += g.preliminarySurfaceLevelAt(x, z, minY, maxY)
+			total += surfaceSampler.preliminarySurfaceLevelAt(x, z)
 			count++
 		}
 	}
 	if count == 0 {
-		return minY
+		return surfaceSampler.minY
 	}
 	return total / count
 }
 
-func (g Generator) sampleTemplateMinY(box structureBox, minY, maxY int) int {
-	value := maxY
+func (g Generator) sampleTemplateMinY(box structureBox, surfaceSampler *structureHeightSampler) int {
+	value := surfaceSampler.maxY
 	for x := box.minX; x <= box.maxX; x++ {
 		for z := box.minZ; z <= box.maxZ; z++ {
-			y := g.preliminarySurfaceLevelAt(x, z, minY, maxY)
+			y := surfaceSampler.preliminarySurfaceLevelAt(x, z)
 			if y < value {
 				value = y
 			}
@@ -537,13 +538,13 @@ func (g Generator) sampleTemplateMinY(box structureBox, minY, maxY int) int {
 	return value
 }
 
-func (g Generator) sampleTemplateFloorY(box structureBox, minY, maxY int) int {
-	topY := maxY
-	minFloor := maxY
+func (g Generator) sampleTemplateFloorY(box structureBox, surfaceSampler *structureHeightSampler) int {
+	topY := surfaceSampler.maxY
+	minFloor := surfaceSampler.maxY
 	steep := 0
 	for x := box.minX; x <= box.maxX; x++ {
 		for z := box.minZ; z <= box.maxZ; z++ {
-			y := g.preliminarySurfaceLevelAt(x, z, minY, maxY)
+			y := surfaceSampler.preliminarySurfaceLevelAt(x, z)
 			if y < minFloor {
 				minFloor = y
 			}
@@ -556,10 +557,10 @@ func (g Generator) sampleTemplateFloorY(box structureBox, minY, maxY int) int {
 	if topY-minFloor > 2 && steep > width-2 {
 		return minFloor + 1
 	}
-	if minFloor < maxY {
+	if minFloor < surfaceSampler.maxY {
 		return minFloor + 1
 	}
-	return minY
+	return surfaceSampler.minY
 }
 
 func chooseRuinedPortalSetup(setups []gen.RuinedPortalSetupDef, rng *gen.Xoroshiro128) gen.RuinedPortalSetupDef {
@@ -713,7 +714,7 @@ func oceanRuinClusterPositions(origin cube.Pos, rotation structureRotation, rng 
 	return positions[:ruins]
 }
 
-func buildSwampHutBlocks(origin cube.Pos, rotation structureRotation, g Generator, minY, maxY int) []plannedStructureBlock {
+func buildSwampHutBlocks(origin cube.Pos, rotation structureRotation, g Generator, surfaceSampler *structureHeightSampler) []plannedStructureBlock {
 	blocks := make([]plannedStructureBlock, 0, 256)
 	fillBox := func(minPos, maxPos [3]int, state gen.BlockState) {
 		for x := minPos[0]; x <= maxPos[0]; x++ {
@@ -784,7 +785,7 @@ func buildSwampHutBlocks(origin cube.Pos, rotation structureRotation, g Generato
 	for _, z := range []int{2, 7} {
 		for _, x := range []int{1, 5} {
 			worldPos := structureTemplateWorldPos(origin, [3]int{x, -1, z}, rotation, structureMirrorNone, cube.Pos{})
-			groundY := g.preliminarySurfaceLevelAt(worldPos[0], worldPos[2], minY, maxY)
+			groundY := surfaceSampler.preliminarySurfaceLevelAt(worldPos[0], worldPos[2])
 			for y := worldPos[1]; y >= groundY-1; y-- {
 				blocks = append(blocks, plannedStructureBlock{
 					worldPos: cube.Pos{worldPos[0], y, worldPos[2]},

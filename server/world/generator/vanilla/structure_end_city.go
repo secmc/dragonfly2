@@ -32,9 +32,9 @@ var (
 	}
 )
 
-func (g Generator) buildEndCityStructure(startChunk world.ChunkPos, _, _ int, minY, maxY int, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
+func (g Generator) buildEndCityStructure(startChunk world.ChunkPos, _, _ int, surfaceSampler *structureHeightSampler, rng *gen.Xoroshiro128) (string, []plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
 	rotation := randomStructureRotation(rng)
-	startPos, ok := g.endCityStartPos(startChunk, rotation, minY, maxY)
+	startPos, ok := g.endCityStartPos(startChunk, rotation, surfaceSampler)
 	if !ok {
 		return "", nil, emptyStructureBox(), cube.Pos{}, [3]int{}, false
 	}
@@ -94,7 +94,7 @@ func (g Generator) buildEndCityStructure(startChunk world.ChunkPos, _, _ int, mi
 	return "end_city/base_floor", pieces, overall, rootOrigin, rootSize, true
 }
 
-func (g Generator) endCityStartPos(startChunk world.ChunkPos, rotation structureRotation, minY, maxY int) (cube.Pos, bool) {
+func (g Generator) endCityStartPos(startChunk world.ChunkPos, rotation structureRotation, surfaceSampler *structureHeightSampler) (cube.Pos, bool) {
 	blockX := int(startChunk[0])*16 + 7
 	blockZ := int(startChunk[1])*16 + 7
 	offsetX, offsetZ := 5, 5
@@ -108,14 +108,14 @@ func (g Generator) endCityStartPos(startChunk world.ChunkPos, rotation structure
 	}
 
 	y := min(
-		min(g.highestStructureSolidYAt(blockX, blockZ, minY, maxY), g.highestStructureSolidYAt(blockX+offsetX, blockZ, minY, maxY)),
-		min(g.highestStructureSolidYAt(blockX, blockZ+offsetZ, minY, maxY), g.highestStructureSolidYAt(blockX+offsetX, blockZ+offsetZ, minY, maxY)),
+		min(g.highestStructureSolidYAt(blockX, blockZ, surfaceSampler.minY, surfaceSampler.maxY), g.highestStructureSolidYAt(blockX+offsetX, blockZ, surfaceSampler.minY, surfaceSampler.maxY)),
+		min(g.highestStructureSolidYAt(blockX, blockZ+offsetZ, surfaceSampler.minY, surfaceSampler.maxY), g.highestStructureSolidYAt(blockX+offsetX, blockZ+offsetZ, surfaceSampler.minY, surfaceSampler.maxY)),
 	)
-	if y <= minY {
-		y = clamp(g.preliminarySurfaceLevelAt(blockX, blockZ, minY, maxY), minY+1, maxY)
+	if y <= surfaceSampler.minY {
+		y = clamp(surfaceSampler.preliminarySurfaceLevelAt(blockX, blockZ), surfaceSampler.minY+1, surfaceSampler.maxY)
 	}
-	if y <= minY {
-		y = min(maxY, max(64, minY+1))
+	if y <= surfaceSampler.minY {
+		y = min(surfaceSampler.maxY, max(64, surfaceSampler.minY+1))
 	}
 	return cube.Pos{blockX, y, blockZ}, true
 }

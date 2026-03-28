@@ -465,12 +465,11 @@ func lookupBiome(climate [6]int64) Biome {
 }
 
 func lookupOverworldPresetBiome(climate [6]int64) Biome {
-	biome := lookupBiome(climate)
 	cont := climate[continentalnessIdx]
 	if cont >= oceanCont && cont < coastCont {
 		return lookupPresetBiome(climate, overworldPresetPoints)
 	}
-	return biome
+	return lookupBiome(climate)
 }
 
 func pickBeach(ti int) Biome {

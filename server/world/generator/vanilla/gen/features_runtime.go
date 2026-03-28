@@ -29,6 +29,17 @@ type FeatureRegistry struct {
 	configuredCache map[string]configuredCacheEntry
 }
 
+type typedJSONCache struct {
+	mu      sync.Mutex
+	entries map[string]typedJSONCacheEntry
+}
+
+type typedJSONCacheEntry struct {
+	loaded bool
+	value  any
+	err    error
+}
+
 type placedCacheEntry struct {
 	loaded bool
 	def    PlacedFeatureDef
@@ -176,6 +187,8 @@ func (r *PlacedFeatureRef) UnmarshalJSON(data []byte) error {
 type ConfiguredFeatureDef struct {
 	Type   string
 	Config json.RawMessage
+
+	decoded *typedJSONCache
 }
 
 func (f *ConfiguredFeatureDef) UnmarshalJSON(data []byte) error {
@@ -188,6 +201,7 @@ func (f *ConfiguredFeatureDef) UnmarshalJSON(data []byte) error {
 	}
 	f.Type = normalizeIdentifier(raw.Type)
 	f.Config = append(json.RawMessage(nil), raw.Config...)
+	f.decoded = newTypedJSONCache()
 	return nil
 }
 
@@ -362,6 +376,8 @@ func (f ConfiguredFeatureDef) EndGateway() (EndGatewayConfig, error) {
 type PlacementModifier struct {
 	Type string
 	Data json.RawMessage
+
+	decoded *typedJSONCache
 }
 
 func (m *PlacementModifier) UnmarshalJSON(data []byte) error {
@@ -373,6 +389,7 @@ func (m *PlacementModifier) UnmarshalJSON(data []byte) error {
 	}
 	m.Type = normalizeIdentifier(probe.Type)
 	m.Data = append(json.RawMessage(nil), data...)
+	m.decoded = newTypedJSONCache()
 	return nil
 }
 
@@ -990,6 +1007,8 @@ func (s *BlockState) UnmarshalJSON(data []byte) error {
 type StateProvider struct {
 	Type string
 	Data json.RawMessage
+
+	decoded *typedJSONCache
 }
 
 func (p *StateProvider) UnmarshalJSON(data []byte) error {
@@ -1014,27 +1033,28 @@ func (p *StateProvider) UnmarshalJSON(data []byte) error {
 		p.Type = normalizeIdentifier(probe.Type)
 	}
 	p.Data = append(json.RawMessage(nil), data...)
+	p.decoded = newTypedJSONCache()
 	return nil
 }
 
 func (p StateProvider) SimpleState() (SimpleStateProviderConfig, error) {
-	return decodeTypedJSON[SimpleStateProviderConfig](p.Type, "simple_state_provider", p.Data)
+	return decodeTypedJSON[SimpleStateProviderConfig](p.Type, "simple_state_provider", p.Data, p.decoded)
 }
 
 func (p StateProvider) WeightedState() (WeightedStateProviderConfig, error) {
-	return decodeTypedJSON[WeightedStateProviderConfig](p.Type, "weighted_state_provider", p.Data)
+	return decodeTypedJSON[WeightedStateProviderConfig](p.Type, "weighted_state_provider", p.Data, p.decoded)
 }
 
 func (p StateProvider) RandomizedIntState() (RandomizedIntStateProviderConfig, error) {
-	return decodeTypedJSON[RandomizedIntStateProviderConfig](p.Type, "randomized_int_state_provider", p.Data)
+	return decodeTypedJSON[RandomizedIntStateProviderConfig](p.Type, "randomized_int_state_provider", p.Data, p.decoded)
 }
 
 func (p StateProvider) RuleBasedState() (RuleBasedStateProviderConfig, error) {
-	return decodeTypedJSON[RuleBasedStateProviderConfig](p.Type, "rule_based_state_provider", p.Data)
+	return decodeTypedJSON[RuleBasedStateProviderConfig](p.Type, "rule_based_state_provider", p.Data, p.decoded)
 }
 
 func (p StateProvider) NoiseThreshold() (NoiseThresholdStateProviderConfig, error) {
-	return decodeTypedJSON[NoiseThresholdStateProviderConfig](p.Type, "noise_threshold_provider", p.Data)
+	return decodeTypedJSON[NoiseThresholdStateProviderConfig](p.Type, "noise_threshold_provider", p.Data, p.decoded)
 }
 
 type SimpleStateProviderConfig struct {
@@ -1080,6 +1100,8 @@ type NoiseThresholdStateProviderConfig struct {
 type BlockPredicate struct {
 	Type string
 	Data json.RawMessage
+
+	decoded *typedJSONCache
 }
 
 func (p *BlockPredicate) UnmarshalJSON(data []byte) error {
@@ -1091,27 +1113,28 @@ func (p *BlockPredicate) UnmarshalJSON(data []byte) error {
 	}
 	p.Type = normalizeIdentifier(probe.Type)
 	p.Data = append(json.RawMessage(nil), data...)
+	p.decoded = newTypedJSONCache()
 	return nil
 }
 
 func (p BlockPredicate) MatchingBlocks() (MatchingBlocksPredicateConfig, error) {
-	return decodeTypedJSON[MatchingBlocksPredicateConfig](p.Type, "matching_blocks", p.Data)
+	return decodeTypedJSON[MatchingBlocksPredicateConfig](p.Type, "matching_blocks", p.Data, p.decoded)
 }
 
 func (p BlockPredicate) MatchingFluids() (MatchingFluidsPredicateConfig, error) {
-	return decodeTypedJSON[MatchingFluidsPredicateConfig](p.Type, "matching_fluids", p.Data)
+	return decodeTypedJSON[MatchingFluidsPredicateConfig](p.Type, "matching_fluids", p.Data, p.decoded)
 }
 
 func (p BlockPredicate) Not() (NotPredicateConfig, error) {
-	return decodeTypedJSON[NotPredicateConfig](p.Type, "not", p.Data)
+	return decodeTypedJSON[NotPredicateConfig](p.Type, "not", p.Data, p.decoded)
 }
 
 func (p BlockPredicate) WouldSurvive() (WouldSurvivePredicateConfig, error) {
-	return decodeTypedJSON[WouldSurvivePredicateConfig](p.Type, "would_survive", p.Data)
+	return decodeTypedJSON[WouldSurvivePredicateConfig](p.Type, "would_survive", p.Data, p.decoded)
 }
 
 func (p BlockPredicate) MatchingBlockTag() (MatchingBlockTagPredicateConfig, error) {
-	return decodeTypedJSON[MatchingBlockTagPredicateConfig](p.Type, "matching_block_tag", p.Data)
+	return decodeTypedJSON[MatchingBlockTagPredicateConfig](p.Type, "matching_block_tag", p.Data, p.decoded)
 }
 
 type MatchingBlocksPredicateConfig struct {
@@ -1171,22 +1194,50 @@ func (p *BlockPos) UnmarshalJSON(data []byte) error {
 }
 
 func decodeFeatureConfig[T any](feature ConfiguredFeatureDef, expectedType string) (T, error) {
-	return decodeTypedJSON[T](feature.Type, expectedType, feature.Config)
+	return decodeTypedJSON[T](feature.Type, expectedType, feature.Config, feature.decoded)
 }
 
 func decodePlacement[T any](modifier PlacementModifier, expectedType string) (T, error) {
-	return decodeTypedJSON[T](modifier.Type, expectedType, modifier.Data)
+	return decodeTypedJSON[T](modifier.Type, expectedType, modifier.Data, modifier.decoded)
 }
 
-func decodeTypedJSON[T any](actualType, expectedType string, data []byte) (T, error) {
+func decodeTypedJSON[T any](actualType, expectedType string, data []byte, cache *typedJSONCache) (T, error) {
 	var out T
 	if actualType != expectedType {
 		return out, fmt.Errorf("expected %s, got %s", expectedType, actualType)
+	}
+	if cache != nil {
+		return decodeCachedJSON[T](cache, expectedType, data)
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return out, err
 	}
 	return out, nil
+}
+
+func newTypedJSONCache() *typedJSONCache {
+	return &typedJSONCache{entries: make(map[string]typedJSONCacheEntry, 1)}
+}
+
+func decodeCachedJSON[T any](c *typedJSONCache, key string, data []byte) (T, error) {
+	var out T
+	c.mu.Lock()
+	if entry, ok := c.entries[key]; ok && entry.loaded {
+		c.mu.Unlock()
+		if entry.err != nil {
+			return out, entry.err
+		}
+		cached, ok := entry.value.(T)
+		if !ok {
+			return out, fmt.Errorf("cached feature config type mismatch for %s", key)
+		}
+		return cached, nil
+	}
+
+	err := json.Unmarshal(data, &out)
+	c.entries[key] = typedJSONCacheEntry{loaded: true, value: out, err: err}
+	c.mu.Unlock()
+	return out, err
 }
 
 func normalizeIdentifier(value string) string {
