@@ -100,9 +100,9 @@ type NoiseBasedAquifer struct {
 	fluidPicker      FluidPicker
 	scratch          *EvalScratch
 
-	neighborGrids map[[2]int]*FlatCacheGrid
-	columnCache   map[[2]int]*ColumnContext
-	surfaceCache  map[[2]int]int
+	neighborGrids map[uint64]*FlatCacheGrid
+	columnCache   map[uint64]*ColumnContext
+	surfaceCache  map[uint64]int
 	cacheMin      aquiferCellKey
 	cacheSizeX    int
 	cacheSizeY    int
@@ -144,9 +144,9 @@ func NewNoiseBasedAquifer(
 		positionalRandom:   NewPositionalRandomFactory(seed).ForkAquiferRandom(),
 		fluidPicker:        fluidPicker,
 		scratch:            NewEvalScratch(graph),
-		neighborGrids:      make(map[[2]int]*FlatCacheGrid, 16),
-		columnCache:        make(map[[2]int]*ColumnContext, 128),
-		surfaceCache:       make(map[[2]int]int, 128),
+		neighborGrids:      make(map[uint64]*FlatCacheGrid, 16),
+		columnCache:        make(map[uint64]*ColumnContext, 128),
+		surfaceCache:       make(map[uint64]int, 128),
 		cacheMin:           aquiferCellKey{x: minGridX, y: minGridY, z: minGridZ},
 		cacheSizeX:         cacheSizeX,
 		cacheSizeY:         cacheSizeY,
@@ -195,7 +195,6 @@ func (a *NoiseBasedAquifer) ComputeSubstance(ctx FunctionContext, density float6
 	fluid1 := a.getAquiferStatus(closestKeys[0])
 	blockAtY := fluid1.At(ctx.BlockY)
 	similarity := aquiferSimilarity(closestDists[0], closestDists[1])
-	flowingUpdateSimilarity := aquiferSimilarity(100, 144)
 
 	if similarity <= 0 {
 		return blockAtY
@@ -208,32 +207,31 @@ func (a *NoiseBasedAquifer) ComputeSubstance(ctx FunctionContext, density float6
 		}
 	}
 
-	col := a.getColumnContext(ctx.BlockX, ctx.BlockZ)
 	fluid2 := a.getAquiferStatus(closestKeys[1])
 	barrierValue := math.NaN()
-	pressure1 := similarity * a.calculatePressure(ctx, col, &barrierValue, fluid1, fluid2)
+	pressure1 := similarity * a.calculatePressure(ctx, &barrierValue, fluid1, fluid2)
 	if density+pressure1 > 0 {
 		return AquiferBarrier
 	}
 
-	fluid3 := a.getAquiferStatus(closestKeys[2])
 	similarity2 := aquiferSimilarity(closestDists[0], closestDists[2])
-	if similarity2 > 0 {
-		pressure2 := similarity * similarity2 * a.calculatePressure(ctx, col, &barrierValue, fluid1, fluid3)
-		if density+pressure2 > 0 {
-			return AquiferBarrier
-		}
-	}
-
 	similarity3 := aquiferSimilarity(closestDists[1], closestDists[2])
-	if similarity3 > 0 {
-		pressure3 := similarity * similarity3 * a.calculatePressure(ctx, col, &barrierValue, fluid2, fluid3)
-		if density+pressure3 > 0 {
-			return AquiferBarrier
+	if similarity2 > 0 || similarity3 > 0 {
+		fluid3 := a.getAquiferStatus(closestKeys[2])
+		if similarity2 > 0 {
+			pressure2 := similarity * similarity2 * a.calculatePressure(ctx, &barrierValue, fluid1, fluid3)
+			if density+pressure2 > 0 {
+				return AquiferBarrier
+			}
+		}
+		if similarity3 > 0 {
+			pressure3 := similarity * similarity3 * a.calculatePressure(ctx, &barrierValue, fluid2, fluid3)
+			if density+pressure3 > 0 {
+				return AquiferBarrier
+			}
 		}
 	}
 
-	_ = flowingUpdateSimilarity
 	return blockAtY
 }
 
@@ -298,7 +296,7 @@ func (a *NoiseBasedAquifer) computeFluid(x, y, z int) FluidStatus {
 		quartX := (sampleX >> 2) << 2
 		quartZ := (sampleZ >> 2) << 2
 
-		rawSurface, ok := a.surfaceCache[[2]int{quartX, quartZ}]
+		rawSurface, ok := a.surfaceCache[aquiferXZKey(quartX, quartZ)]
 		if !ok {
 			col := a.getColumnContext(quartX, quartZ)
 			grid := a.gridForBlock(quartX, quartZ)
@@ -308,7 +306,7 @@ func (a *NoiseBasedAquifer) computeFluid(x, y, z int) FluidStatus {
 				grid,
 				col,
 			)))
-			a.surfaceCache[[2]int{quartX, quartZ}] = rawSurface
+			a.surfaceCache[aquiferXZKey(quartX, quartZ)] = rawSurface
 		}
 
 		adjustedSurface := rawSurface + 8
@@ -418,7 +416,6 @@ func (a *NoiseBasedAquifer) isDeepDarkRegion(ctx FunctionContext, grid *FlatCach
 
 func (a *NoiseBasedAquifer) calculatePressure(
 	ctx FunctionContext,
-	_ *ColumnContext,
 	barrierValue *float64,
 	fluid1, fluid2 FluidStatus,
 ) float64 {
@@ -465,7 +462,7 @@ func (a *NoiseBasedAquifer) calculatePressure(
 }
 
 func (a *NoiseBasedAquifer) getColumnContext(x, z int) *ColumnContext {
-	key := [2]int{x, z}
+	key := aquiferXZKey(x, z)
 	if col, ok := a.columnCache[key]; ok {
 		return col
 	}
@@ -481,13 +478,17 @@ func (a *NoiseBasedAquifer) gridForBlock(x, z int) *FlatCacheGrid {
 	if chunkX == a.mainChunkX && chunkZ == a.mainChunkZ {
 		return a.mainFlat
 	}
-	key := [2]int{chunkX, chunkZ}
+	key := aquiferXZKey(chunkX, chunkZ)
 	if grid, ok := a.neighborGrids[key]; ok {
 		return grid
 	}
 	grid := a.graph.NewFlatCacheGrid(chunkX, chunkZ, a.noises)
 	a.neighborGrids[key] = grid
 	return grid
+}
+
+func aquiferXZKey(x, z int) uint64 {
+	return uint64(uint32(x))<<32 | uint64(uint32(z))
 }
 
 func (a *NoiseBasedAquifer) evalSimpleRoot(root int, ctx FunctionContext) float64 {

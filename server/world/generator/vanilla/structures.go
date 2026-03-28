@@ -324,12 +324,13 @@ func (g Generator) placeStructures(c *chunk.Chunk, biomes sourceBiomeVolume, chu
 		return
 	}
 
+	surfaceSampler := newStructureHeightSampler(g, minY, maxY)
 	for _, planner := range g.structurePlanners {
-		g.placeRandomSpreadStructureSet(c, biomes, chunkX, chunkZ, minY, maxY, planner)
+		g.placeRandomSpreadStructureSet(c, biomes, chunkX, chunkZ, minY, maxY, planner, surfaceSampler)
 	}
 }
 
-func (g Generator) placeRandomSpreadStructureSet(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, planner structurePlanner) {
+func (g Generator) placeRandomSpreadStructureSet(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, planner structurePlanner, surfaceSampler *structureHeightSampler) {
 	startMinChunkX := chunkX - planner.maxBackreachX
 	startMaxChunkX := chunkX + planner.maxBackreachX
 	startMinChunkZ := chunkZ - planner.maxBackreachZ
@@ -346,7 +347,7 @@ func (g Generator) placeRandomSpreadStructureSet(c *chunk.Chunk, biomes sourceBi
 			if int(startChunk[0]) < startMinChunkX || int(startChunk[0]) > startMaxChunkX || int(startChunk[1]) < startMinChunkZ || int(startChunk[1]) > startMaxChunkZ {
 				continue
 			}
-			start, ok := g.planStructureStart(planner, startChunk, minY, maxY)
+			start, ok := g.planStructureStart(planner, startChunk, minY, maxY, surfaceSampler)
 			if !ok || !structureIntersectsChunk(start, chunkX, chunkZ, minY, maxY) {
 				continue
 			}
@@ -370,7 +371,7 @@ func ceilDiv(value, divisor int) int {
 	return -floorDiv(-value, divisor)
 }
 
-func (g Generator) planStructureStart(planner structurePlanner, startChunk world.ChunkPos, minY, maxY int) (plannedStructureStart, bool) {
+func (g Generator) planStructureStart(planner structurePlanner, startChunk world.ChunkPos, minY, maxY int, surfaceSampler *structureHeightSampler) (plannedStructureStart, bool) {
 	cacheKey := structureStartKey{setName: planner.setName, chunkX: startChunk[0], chunkZ: startChunk[1]}
 	if start, exists, ok := g.structureStarts.Lookup(cacheKey); ok {
 		return start, exists
@@ -382,7 +383,9 @@ func (g Generator) planStructureStart(planner structurePlanner, startChunk world
 
 	startX := int(startChunk[0]) * 16
 	startZ := int(startChunk[1]) * 16
-	surfaceSampler := newStructureHeightSampler(g, minY, maxY)
+	if surfaceSampler == nil {
+		surfaceSampler = newStructureHeightSampler(g, minY, maxY)
+	}
 	surfaceHeightmapY := surfaceSampler.worldSurfaceLevelAt(startX+8, startZ+8)
 	surfaceY := clamp(surfaceHeightmapY-1, minY, maxY)
 	surfaceBiome := g.biomeSource.GetBiome(startX+8, surfaceY, startZ+8)
@@ -800,7 +803,7 @@ func FindPlannedStructureStartForDimension(seed int64, dim world.Dimension, setN
 	for gridX := -maxGridDistance; gridX <= maxGridDistance; gridX++ {
 		for gridZ := -maxGridDistance; gridZ <= maxGridDistance; gridZ++ {
 			startChunk := randomSpreadPotentialChunk(seed, planner.placement, gridX, gridZ)
-			start, exists := g.planStructureStart(planner, startChunk, -64, 319)
+			start, exists := g.planStructureStart(planner, startChunk, -64, 319, nil)
 			if !exists {
 				continue
 			}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 
@@ -15,8 +16,10 @@ type structureResolver struct {
 	worldgen  *gen.WorldgenRegistry
 	templates *gen.StructureTemplateRegistry
 
-	mu    sync.RWMutex
-	pools map[string]resolvedStructurePool
+	mu        sync.RWMutex
+	pools     map[string]resolvedStructurePool
+	prewarmMu sync.Mutex
+	prewarmed map[string]struct{}
 }
 
 type resolvedStructurePool struct {
@@ -31,7 +34,18 @@ type resolvedPoolElement struct {
 	placements  []structureTemplatePlacement
 	features    []structureFeaturePlacement
 	jigsaws     []structureJigsaw
+	rotated     [4]precomputedPlacedJigsaws
 	size        [3]int
+}
+
+type precomputedPlacedJigsaws struct {
+	values []placedStructureJigsaw
+	groups []jigsawPriorityGroup
+}
+
+type jigsawPriorityGroup struct {
+	start int
+	end   int
 }
 
 type structureTemplatePlacement struct {
@@ -132,24 +146,38 @@ func newStructureResolver(worldgen *gen.WorldgenRegistry, templates *gen.Structu
 		worldgen:  worldgen,
 		templates: templates,
 		pools:     make(map[string]resolvedStructurePool),
+		prewarmed: make(map[string]struct{}),
 	}
 }
 
 func (r *structureResolver) prewarmJigsawCandidates(planners []structurePlanner) {
+	var queue []string
 	for _, planner := range planners {
 		for _, candidate := range planner.candidates {
 			if candidate.structureType != "jigsaw" {
 				continue
 			}
-			r.prewarmPoolGraph(candidate.jigsaw.StartPool, candidate.jigsaw.PoolAliases)
+			if root := normalizeIdentifierName(candidate.jigsaw.StartPool); root != "" && root != "empty" {
+				queue = append(queue, root)
+			}
+			queue = append(queue, collectPoolAliasTargets(candidate.jigsaw.PoolAliases)...)
 		}
 	}
+	r.prewarmPoolGraph(queue)
 }
 
-func (r *structureResolver) prewarmPoolGraph(startPool string, aliases []gen.PoolAliasDef) {
-	queue := []string{normalizeIdentifierName(startPool)}
-	queue = append(queue, collectPoolAliasTargets(aliases)...)
-	visited := make(map[string]struct{}, len(queue))
+func (r *structureResolver) prewarmPoolGraph(queue []string) {
+	if len(queue) == 0 {
+		return
+	}
+
+	r.prewarmMu.Lock()
+	defer r.prewarmMu.Unlock()
+
+	visited := make(map[string]struct{}, len(r.prewarmed)+len(queue))
+	for name := range r.prewarmed {
+		visited[name] = struct{}{}
+	}
 
 	for len(queue) > 0 {
 		name := normalizeIdentifierName(queue[len(queue)-1])
@@ -176,6 +204,10 @@ func (r *structureResolver) prewarmPoolGraph(startPool string, aliases []gen.Poo
 				}
 			}
 		}
+	}
+
+	for name := range visited {
+		r.prewarmed[name] = struct{}{}
 	}
 }
 
@@ -269,7 +301,7 @@ func (r *structureResolver) resolvePoolElement(def gen.TemplatePoolElementDef) (
 		if err != nil {
 			return resolvedPoolElement{}, err
 		}
-		return resolvedPoolElement{
+		return precomputeResolvedPoolElementJigsaws(resolvedPoolElement{
 			elementType: def.ElementType,
 			projection:  normalizeIdentifierName(single.Projection),
 			placements: []structureTemplatePlacement{{
@@ -279,7 +311,7 @@ func (r *structureResolver) resolvePoolElement(def gen.TemplatePoolElementDef) (
 			}},
 			jigsaws: extractTemplateJigsaws(template),
 			size:    template.Size,
-		}, nil
+		}), nil
 	case "list_pool_element":
 		var raw listPoolElementDef
 		if err := json.Unmarshal(def.Raw, &raw); err != nil {
@@ -301,13 +333,13 @@ func (r *structureResolver) resolvePoolElement(def gen.TemplatePoolElementDef) (
 				out.jigsaws = append(out.jigsaws, resolved.jigsaws...)
 			}
 		}
-		return out, nil
+		return precomputeResolvedPoolElementJigsaws(out), nil
 	case "feature_pool_element":
 		var raw featurePoolElementDef
 		if err := json.Unmarshal(def.Raw, &raw); err != nil {
 			return resolvedPoolElement{}, err
 		}
-		return resolvedPoolElement{
+		return precomputeResolvedPoolElementJigsaws(resolvedPoolElement{
 			elementType: def.ElementType,
 			projection:  normalizeIdentifierName(raw.Projection),
 			features: []structureFeaturePlacement{{
@@ -323,7 +355,7 @@ func (r *structureResolver) resolvePoolElement(def gen.TemplatePoolElementDef) (
 				pool:   "empty",
 				target: "empty",
 			}},
-		}, nil
+		}), nil
 	case "empty_pool_element":
 		return resolvedPoolElement{elementType: def.ElementType}, nil
 	default:
@@ -652,32 +684,80 @@ func shuffleWithRNG[T any](values []T, rng *gen.Xoroshiro128) {
 	}
 }
 
+func precomputeResolvedPoolElementJigsaws(element resolvedPoolElement) resolvedPoolElement {
+	element.rotated = precomputePlacedJigsaws(element.size, element.jigsaws)
+	return element
+}
+
+func precomputePlacedJigsaws(size [3]int, jigsaws []structureJigsaw) [4]precomputedPlacedJigsaws {
+	var out [4]precomputedPlacedJigsaws
+	if len(jigsaws) == 0 {
+		return out
+	}
+	for i := range out {
+		rotation := structureRotation(i)
+		values := make([]placedStructureJigsaw, len(jigsaws))
+		for j, jigsaw := range jigsaws {
+			rotated := rotateStructurePos(size, jigsaw.pos, rotation)
+			values[j] = placedStructureJigsaw{
+				pos: cube.Pos{
+					rotated[0],
+					rotated[1],
+					rotated[2],
+				},
+				localY:            rotated[1],
+				front:             rotateStructureDirection(jigsaw.front, rotation),
+				top:               rotateStructureDirection(jigsaw.top, rotation),
+				joint:             jigsaw.joint,
+				name:              jigsaw.name,
+				pool:              jigsaw.pool,
+				target:            jigsaw.target,
+				placementPriority: jigsaw.placementPriority,
+				selectionPriority: jigsaw.selectionPriority,
+			}
+		}
+		sort.Slice(values, func(a, b int) bool {
+			return values[a].selectionPriority > values[b].selectionPriority
+		})
+		groups := make([]jigsawPriorityGroup, 0, len(values))
+		for start := 0; start < len(values); {
+			end := start + 1
+			for end < len(values) && values[end].selectionPriority == values[start].selectionPriority {
+				end++
+			}
+			groups = append(groups, jigsawPriorityGroup{start: start, end: end})
+			start = end
+		}
+		out[i] = precomputedPlacedJigsaws{values: values, groups: groups}
+	}
+	return out
+}
+
 func (element resolvedPoolElement) appendShuffledJigsaws(dst []placedStructureJigsaw, origin cube.Pos, rotation structureRotation, rng *gen.Xoroshiro128) []placedStructureJigsaw {
+	precomputed := element.rotated[rotation]
+	if len(precomputed.values) == 0 {
+		precomputed = precomputePlacedJigsaws(element.size, element.jigsaws)[rotation]
+	}
 	start := len(dst)
-	dst = slices.Grow(dst, len(element.jigsaws))
-	dst = dst[:start+len(element.jigsaws)]
-	for i, jigsaw := range element.jigsaws {
-		rotated := rotateStructurePos(element.size, jigsaw.pos, rotation)
-		dst[start+i] = placedStructureJigsaw{
-			pos: cube.Pos{
-				origin[0] + rotated[0],
-				origin[1] + rotated[1],
-				origin[2] + rotated[2],
-			},
-			localY:            rotated[1],
-			front:             rotateStructureDirection(jigsaw.front, rotation),
-			top:               rotateStructureDirection(jigsaw.top, rotation),
-			joint:             jigsaw.joint,
-			name:              jigsaw.name,
-			pool:              jigsaw.pool,
-			target:            jigsaw.target,
-			placementPriority: jigsaw.placementPriority,
-			selectionPriority: jigsaw.selectionPriority,
+	dst = slices.Grow(dst, len(precomputed.values))
+	dst = dst[:start+len(precomputed.values)]
+	if origin == (cube.Pos{}) {
+		copy(dst[start:], precomputed.values)
+	} else {
+		for i, jigsaw := range precomputed.values {
+			placed := jigsaw
+			placed.pos = cube.Pos{
+				origin[0] + jigsaw.pos[0],
+				origin[1] + jigsaw.pos[1],
+				origin[2] + jigsaw.pos[2],
+			}
+			dst[start+i] = placed
 		}
 	}
 	ordered := dst[start:]
-	shuffleWithRNG(ordered, rng)
-	stableSortJigsawsBySelectionPriority(ordered)
+	for _, group := range precomputed.groups {
+		shuffleWithRNG(ordered[group.start:group.end], rng)
+	}
 	return dst
 }
 
@@ -875,7 +955,7 @@ func (g Generator) buildPlannedStructure(
 	surfaceSampler *structureHeightSampler,
 	rng *gen.Xoroshiro128,
 ) ([]plannedStructurePiece, structureBox, cube.Pos, [3]int, bool) {
-	rootElement := resolvedPoolElement{
+	rootElement := precomputeResolvedPoolElementJigsaws(resolvedPoolElement{
 		elementType: "start",
 		projection:  start.projection,
 		placements: []structureTemplatePlacement{{
@@ -885,7 +965,7 @@ func (g Generator) buildPlannedStructure(
 		}},
 		jigsaws: start.jigsaws,
 		size:    start.size,
-	}
+	})
 	if len(rootElement.placements) == 0 {
 		return nil, emptyStructureBox(), cube.Pos{}, [3]int{}, false
 	}

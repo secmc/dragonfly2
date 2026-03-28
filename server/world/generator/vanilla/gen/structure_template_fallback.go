@@ -99,12 +99,12 @@ func (r structureTemplateNBTReader) readStructureTemplate(depth int) (StructureT
 func (r structureTemplateNBTReader) readStructureTemplateSize(tag byte, depth int) ([3]int, error) {
 	var out [3]int
 
-	values, err := r.readIntVector(tag, depth)
+	values, ok, err := r.readFixedIntVector3(tag, depth)
 	if err != nil {
 		return out, err
 	}
-	if len(values) >= 3 {
-		out = [3]int{values[0], values[1], values[2]}
+	if ok {
+		out = values
 	}
 	return out, nil
 }
@@ -277,10 +277,12 @@ func (r structureTemplateNBTReader) readStructureTemplateBlockPayload(tag byte, 
 
 		switch name {
 		case "pos":
-			var values []int
-			values, err = r.readIntVector(nextTag, depth+1)
-			if err == nil && len(values) >= 3 {
-				out.Pos = [3]int{values[0], values[1], values[2]}
+			values, ok, readErr := r.readFixedIntVector3(nextTag, depth+1)
+			if readErr != nil {
+				return StructureTemplateBlock{}, false, readErr
+			}
+			if ok {
+				out.Pos = values
 				posSet = true
 			}
 		case "state":
@@ -299,6 +301,54 @@ func (r structureTemplateNBTReader) readStructureTemplateBlockPayload(tag byte, 
 		if err != nil {
 			return StructureTemplateBlock{}, false, err
 		}
+	}
+}
+
+func (r structureTemplateNBTReader) readFixedIntVector3(tag byte, depth int) ([3]int, bool, error) {
+	var out [3]int
+	if depth >= structureTemplateMaxDepth {
+		return out, false, fmt.Errorf("structure template NBT exceeded depth %d", structureTemplateMaxDepth)
+	}
+
+	switch tag {
+	case structureNBTTagList:
+		elemTag, length, err := r.readListHeader()
+		if err != nil {
+			return out, false, err
+		}
+		for i := int32(0); i < length; i++ {
+			value, err := r.readIntPayload(elemTag)
+			if err != nil {
+				return out, false, err
+			}
+			if i < 3 {
+				out[i] = value
+			}
+		}
+		return out, length >= 3, nil
+	case structureNBTTagIntArray:
+		length, err := r.readInt32()
+		if err != nil {
+			return out, false, err
+		}
+		if length < 0 {
+			return out, false, fmt.Errorf("negative int array length %d", length)
+		}
+		for i := int32(0); i < length; i++ {
+			value, err := r.readInt32()
+			if err != nil {
+				return out, false, err
+			}
+			if i < 3 {
+				out[i] = int(value)
+			}
+		}
+		return out, length >= 3, nil
+	default:
+		if err := r.skipTagPayload(tag, depth); err != nil {
+			return out, false, err
+		}
+		return out, false, nil
 	}
 }
 
@@ -606,37 +656,43 @@ func (r structureTemplateNBTReader) readByte() (byte, error) {
 }
 
 func (r structureTemplateNBTReader) readInt16() (int16, error) {
-	var value int16
-	err := binary.Read(r.r, binary.BigEndian, &value)
-	return value, err
+	var buf [2]byte
+	if _, err := io.ReadFull(r.r, buf[:]); err != nil {
+		return 0, err
+	}
+	return int16(binary.BigEndian.Uint16(buf[:])), nil
 }
 
 func (r structureTemplateNBTReader) readInt32() (int32, error) {
-	var value int32
-	err := binary.Read(r.r, binary.BigEndian, &value)
-	return value, err
+	var buf [4]byte
+	if _, err := io.ReadFull(r.r, buf[:]); err != nil {
+		return 0, err
+	}
+	return int32(binary.BigEndian.Uint32(buf[:])), nil
 }
 
 func (r structureTemplateNBTReader) readInt64() (int64, error) {
-	var value int64
-	err := binary.Read(r.r, binary.BigEndian, &value)
-	return value, err
+	var buf [8]byte
+	if _, err := io.ReadFull(r.r, buf[:]); err != nil {
+		return 0, err
+	}
+	return int64(binary.BigEndian.Uint64(buf[:])), nil
 }
 
 func (r structureTemplateNBTReader) readFloat32() (float32, error) {
-	var bits uint32
-	if err := binary.Read(r.r, binary.BigEndian, &bits); err != nil {
+	var buf [4]byte
+	if _, err := io.ReadFull(r.r, buf[:]); err != nil {
 		return 0, err
 	}
-	return math.Float32frombits(bits), nil
+	return math.Float32frombits(binary.BigEndian.Uint32(buf[:])), nil
 }
 
 func (r structureTemplateNBTReader) readFloat64() (float64, error) {
-	var bits uint64
-	if err := binary.Read(r.r, binary.BigEndian, &bits); err != nil {
+	var buf [8]byte
+	if _, err := io.ReadFull(r.r, buf[:]); err != nil {
 		return 0, err
 	}
-	return math.Float64frombits(bits), nil
+	return math.Float64frombits(binary.BigEndian.Uint64(buf[:])), nil
 }
 
 func (r structureTemplateNBTReader) readString() (string, error) {

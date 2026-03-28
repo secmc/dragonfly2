@@ -37,11 +37,12 @@ func TestPlanVillageStructureStart(t *testing.T) {
 	if !ok {
 		t.Fatal("load village structure planner")
 	}
+	surfaceSampler := newStructureHeightSampler(g, -64, 319)
 
 	for gridX := -8; gridX <= 8; gridX++ {
 		for gridZ := -8; gridZ <= 8; gridZ++ {
 			startChunk := randomSpreadPotentialChunk(g.seed, planner.placement, gridX, gridZ)
-			start, exists := g.planStructureStart(planner, startChunk, -64, 319)
+			start, exists := g.planStructureStart(planner, startChunk, -64, 319, surfaceSampler)
 			if !exists {
 				continue
 			}
@@ -107,6 +108,7 @@ func TestPlacePlannedStructureWritesBlocks(t *testing.T) {
 	if !ok {
 		t.Fatal("load village structure planner")
 	}
+	surfaceSampler := newStructureHeightSampler(g, -64, 319)
 
 	var (
 		start foundStart
@@ -115,7 +117,7 @@ func TestPlacePlannedStructureWritesBlocks(t *testing.T) {
 	for gridX := -8; gridX <= 8 && !found; gridX++ {
 		for gridZ := -8; gridZ <= 8; gridZ++ {
 			chunkPos := randomSpreadPotentialChunk(g.seed, planner.placement, gridX, gridZ)
-			planned, exists := g.planStructureStart(planner, chunkPos, -64, 319)
+			planned, exists := g.planStructureStart(planner, chunkPos, -64, 319, surfaceSampler)
 			if !exists {
 				continue
 			}
@@ -787,10 +789,11 @@ func tryFindPlannedStartForPlannerInGridRange(g Generator, plannerName string, m
 	if !ok {
 		return plannedStructureStart{}, 0, 0, false
 	}
+	surfaceSampler := newStructureHeightSampler(g, -64, 319)
 	for gridX := minGridX; gridX <= maxGridX; gridX++ {
 		for gridZ := minGridZ; gridZ <= maxGridZ; gridZ++ {
 			startChunk := randomSpreadPotentialChunk(g.seed, planner.placement, gridX, gridZ)
-			start, exists := g.planStructureStart(planner, startChunk, -64, 319)
+			start, exists := g.planStructureStart(planner, startChunk, -64, 319, surfaceSampler)
 			if exists {
 				return start, int(startChunk[0]), int(startChunk[1]), true
 			}

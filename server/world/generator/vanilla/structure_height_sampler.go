@@ -13,8 +13,8 @@ type structureHeightSampler struct {
 	maxY             int
 	finalDensityRoot int
 
-	preliminary map[[2]int]*structurePreliminaryChunk
-	world       map[[2]int]*structureWorldSurfaceChunk
+	preliminary map[uint64]*structurePreliminaryChunk
+	world       map[uint64]*structureWorldSurfaceChunk
 }
 
 type structurePreliminaryChunk struct {
@@ -37,14 +37,14 @@ func newStructureHeightSampler(g Generator, minY, maxY int) *structureHeightSamp
 		minY:             minY,
 		maxY:             maxY,
 		finalDensityRoot: g.rootIndex("final_density"),
-		preliminary:      make(map[[2]int]*structurePreliminaryChunk, 4),
-		world:            make(map[[2]int]*structureWorldSurfaceChunk, 4),
+		preliminary:      make(map[uint64]*structurePreliminaryChunk, 4),
+		world:            make(map[uint64]*structureWorldSurfaceChunk, 4),
 	}
 }
 
 func (s *structureHeightSampler) preliminarySurfaceLevelAt(blockX, blockZ int) int {
 	chunkX, chunkZ, localX, localZ := structureHeightChunkCoords(blockX, blockZ)
-	key := [2]int{chunkX, chunkZ}
+	key := structureHeightSamplerKey(chunkX, chunkZ)
 	entry := s.preliminary[key]
 	if entry == nil {
 		entry = &structurePreliminaryChunk{
@@ -83,7 +83,7 @@ func (s *structureHeightSampler) worldSurfaceLevelAt(blockX, blockZ int) int {
 	}
 
 	chunkX, chunkZ, localX, localZ := structureHeightChunkCoords(blockX, blockZ)
-	key := [2]int{chunkX, chunkZ}
+	key := structureHeightSamplerKey(chunkX, chunkZ)
 	entry := s.world[key]
 	if entry == nil {
 		flat := s.g.graph.NewFlatCacheGrid(chunkX, chunkZ, s.g.noises)
@@ -154,4 +154,8 @@ func structureHeightChunkCoords(blockX, blockZ int) (chunkX, chunkZ, localX, loc
 	localX = blockX - chunkX*16
 	localZ = blockZ - chunkZ*16
 	return chunkX, chunkZ, localX, localZ
+}
+
+func structureHeightSamplerKey(x, z int) uint64 {
+	return uint64(uint32(x))<<32 | uint64(uint32(z))
 }

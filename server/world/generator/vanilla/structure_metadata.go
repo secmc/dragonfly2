@@ -21,6 +21,7 @@ func (g Generator) populateStructureMetadata(pos world.ChunkPos, col *chunk.Colu
 	chunkZ := int(pos[1])
 	minY := col.Chunk.Range().Min()
 	maxY := col.Chunk.Range().Max()
+	surfaceSampler := newStructureHeightSampler(g, minY, maxY)
 
 	starts := make([]chunk.StructureStart, 0, 4)
 	refs := make([]chunk.StructureReference, 0, 8)
@@ -44,7 +45,7 @@ func (g Generator) populateStructureMetadata(pos world.ChunkPos, col *chunk.Colu
 				if int(startChunk[0]) < startMinChunkX || int(startChunk[0]) > startMaxChunkX || int(startChunk[1]) < startMinChunkZ || int(startChunk[1]) > startMaxChunkZ {
 					continue
 				}
-				start, ok := g.planStructureStart(planner, startChunk, minY, maxY)
+				start, ok := g.planStructureStart(planner, startChunk, minY, maxY, surfaceSampler)
 				if !ok || !structureIntersectsChunk(start, chunkX, chunkZ, minY, maxY) {
 					continue
 				}
