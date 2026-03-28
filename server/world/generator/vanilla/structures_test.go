@@ -42,7 +42,7 @@ func TestPlanVillageStructureStart(t *testing.T) {
 
 	for gridX := -8; gridX <= 8; gridX++ {
 		for gridZ := -8; gridZ <= 8; gridZ++ {
-			startChunk := randomSpreadPotentialChunk(g.seed, planner.placement, gridX, gridZ)
+			startChunk := randomSpreadPotentialChunk(g.seed, planner.randomPlacement, gridX, gridZ)
 			start, exists := g.planStructureStart(planner, startChunk, -64, 319, surfaceSampler)
 			if !exists {
 				continue
@@ -216,7 +216,7 @@ func TestPlacePlannedStructureWritesBlocks(t *testing.T) {
 	)
 	for gridX := -8; gridX <= 8 && !found; gridX++ {
 		for gridZ := -8; gridZ <= 8; gridZ++ {
-			chunkPos := randomSpreadPotentialChunk(g.seed, planner.placement, gridX, gridZ)
+			chunkPos := randomSpreadPotentialChunk(g.seed, planner.randomPlacement, gridX, gridZ)
 			planned, exists := g.planStructureStart(planner, chunkPos, -64, 319, surfaceSampler)
 			if !exists {
 				continue
@@ -335,6 +335,15 @@ func TestStructureCandidateAllowedUsesExactDirectBiomeTags(t *testing.T) {
 	if g.structureCandidateAllowed(structurePlannerCandidate{biomeTag: "has_structure/woodland_mansion"}, gen.BiomeForest) {
 		t.Fatal("expected woodland mansion to reject plain forest")
 	}
+	if !g.structureCandidateAllowed(structurePlannerCandidate{biomeTag: "has_structure/woodland_mansion"}, gen.BiomeDarkForest) {
+		t.Fatal("expected woodland mansion in dark forest")
+	}
+	if !g.structureCandidateAllowed(structurePlannerCandidate{biomeTag: "has_structure/ocean_monument"}, gen.BiomeDeepOcean) {
+		t.Fatal("expected ocean monument in deep ocean")
+	}
+	if g.structureCandidateAllowed(structurePlannerCandidate{biomeTag: "has_structure/ocean_monument"}, gen.BiomeOcean) {
+		t.Fatal("expected ocean monument to reject non-deep ocean")
+	}
 	if !g.structureCandidateAllowed(structurePlannerCandidate{biomeTag: "has_structure/trial_chambers"}, gen.BiomePlains) {
 		t.Fatal("expected trial chambers in plains")
 	}
@@ -347,6 +356,12 @@ func TestStructureCandidateAllowedUsesExactDirectBiomeTags(t *testing.T) {
 	if g.structureCandidateAllowed(structurePlannerCandidate{biomeTag: "has_structure/bastion_remnant"}, gen.BiomeBasaltDeltas) {
 		t.Fatal("expected basalt deltas to be rejected for bastion remnants")
 	}
+	if !g.structureCandidateAllowed(structurePlannerCandidate{biomeTag: "has_structure/mineshaft_mesa"}, gen.BiomeBadlands) {
+		t.Fatal("expected mesa mineshafts in badlands")
+	}
+	if g.structureCandidateAllowed(structurePlannerCandidate{biomeTag: "has_structure/mineshaft_mesa"}, gen.BiomePlains) {
+		t.Fatal("expected mesa mineshafts to reject plains")
+	}
 }
 
 func TestPillagerOutpostPlacementUsesVillageExclusionZone(t *testing.T) {
@@ -357,15 +372,15 @@ func TestPillagerOutpostPlacementUsesVillageExclusionZone(t *testing.T) {
 	if !ok {
 		t.Fatal("load pillager outpost structure planner")
 	}
-	if outposts.placement.ExclusionZone.OtherSet != "villages" || outposts.placement.ExclusionZone.ChunkCount != 10 {
-		t.Fatalf("expected pillager outposts exclusion zone to target villages within 10 chunks, got %+v", outposts.placement.ExclusionZone)
+	if outposts.randomPlacement.ExclusionZone.OtherSet != "villages" || outposts.randomPlacement.ExclusionZone.ChunkCount != 10 {
+		t.Fatalf("expected pillager outposts exclusion zone to target villages within 10 chunks, got %+v", outposts.randomPlacement.ExclusionZone)
 	}
 
 	surfaceSampler := newStructureHeightSampler(g, -64, 319)
 	for gridX := -32; gridX <= 32; gridX++ {
 		for gridZ := -32; gridZ <= 32; gridZ++ {
-			startChunk := randomSpreadPotentialChunk(g.seed, outposts.placement, gridX, gridZ)
-			if !structurePlacementAllows(g.seed, outposts.placement, int(startChunk[0]), int(startChunk[1])) {
+			startChunk := randomSpreadPotentialChunk(g.seed, outposts.randomPlacement, gridX, gridZ)
+			if !structurePlacementAllows(g.seed, outposts.randomPlacement, int(startChunk[0]), int(startChunk[1])) {
 				continue
 			}
 			if !g.structurePlacementExcludedByOtherSet(outposts, startChunk, -64, 319, surfaceSampler) {
@@ -721,30 +736,24 @@ func TestStructurePlannersIncludeImplementedRegistrySets(t *testing.T) {
 	for _, setName := range []string{
 		"ancient_cities",
 		"buried_treasures",
+		"desert_pyramids",
 		"igloos",
+		"jungle_temples",
+		"mineshafts",
+		"ocean_monuments",
 		"ocean_ruins",
 		"pillager_outposts",
 		"ruined_portals",
 		"shipwrecks",
+		"strongholds",
 		"swamp_huts",
 		"trail_ruins",
 		"trial_chambers",
 		"villages",
+		"woodland_mansions",
 	} {
 		if _, ok := overworld.findStructurePlanner(setName); !ok {
 			t.Fatalf("expected overworld planner for implemented registry set %q", setName)
-		}
-	}
-	for _, setName := range []string{
-		"desert_pyramids",
-		"jungle_temples",
-		"mineshafts",
-		"ocean_monuments",
-		"strongholds",
-		"woodland_mansions",
-	} {
-		if _, ok := overworld.findStructurePlanner(setName); ok {
-			t.Fatalf("did not expect planner for unsupported overworld registry set %q", setName)
 		}
 	}
 
@@ -809,6 +818,30 @@ func TestGeneratedShipwreckChunkContainsTemplateBlocks(t *testing.T) {
 	}
 }
 
+func TestPlanDesertPyramidStructureStart(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForPlanner(t, g, "desert_pyramids", 128)
+	if start.structureName != "desert_pyramid" {
+		t.Fatalf("expected desert pyramid structure, got %q", start.structureName)
+	}
+	if len(start.pieces) == 0 {
+		t.Fatal("expected planned desert pyramid pieces")
+	}
+}
+
+func TestGeneratedDesertPyramidChunkContainsStructureBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, startChunkX, startChunkZ := findPlannedStartForPlanner(t, g, "desert_pyramids", 128)
+	pos := firstPlacedStructureChunkContainingBlocks(t, g, start, startChunkX, startChunkZ, cube.Range{-64, 319}, gen.BiomeDesert)
+	if countPlacedStructureBlocksInChunk(t, g, start, pos, cube.Range{-64, 319}, gen.BiomeDesert) == 0 {
+		t.Fatal("expected generated desert pyramid chunk intersecting the planned pyramid to contain structure blocks")
+	}
+}
+
 func TestPlanPillagerOutpostStructureStart(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
@@ -868,6 +901,218 @@ func TestPlanRuinedPortalStructureStart(t *testing.T) {
 	if len(start.pieces) == 0 {
 		t.Fatal("expected planned ruined portal pieces")
 	}
+}
+
+func TestPlanJungleTempleStructureStart(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForPlanner(t, g, "jungle_temples", 128)
+	if start.structureName != "jungle_pyramid" {
+		t.Fatalf("expected jungle pyramid structure, got %q", start.structureName)
+	}
+	if len(start.pieces) == 0 {
+		t.Fatal("expected planned jungle temple pieces")
+	}
+}
+
+func TestGeneratedJungleTempleChunkContainsStructureBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, startChunkX, startChunkZ := findPlannedStartForPlanner(t, g, "jungle_temples", 128)
+	pos := firstPlacedStructureChunkContainingBlocks(t, g, start, startChunkX, startChunkZ, cube.Range{-64, 319}, gen.BiomeJungle)
+	if countPlacedStructureBlocksInChunk(t, g, start, pos, cube.Range{-64, 319}, gen.BiomeJungle) == 0 {
+		t.Fatal("expected generated jungle temple chunk intersecting the planned temple to contain structure blocks")
+	}
+}
+
+func TestStrongholdConcentricRingPositions(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	planner, ok := g.findStructurePlanner("strongholds")
+	if !ok {
+		t.Fatal("expected stronghold planner")
+	}
+	if planner.placementType != "concentric_rings" {
+		t.Fatalf("expected stronghold planner to use concentric_rings, got %q", planner.placementType)
+	}
+	positions := g.ringPositionsForPlanner(planner)
+	if len(positions) != planner.concentricPlacement.Count {
+		t.Fatalf("expected %d stronghold ring positions, got %d", planner.concentricPlacement.Count, len(positions))
+	}
+	if positions[0] == (world.ChunkPos{}) {
+		t.Fatal("expected first stronghold ring position to be non-zero")
+	}
+}
+
+func TestLocateNearestPlannedStructureStartForDimensionFindsStronghold(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	info, ok := LocateNearestPlannedStructureStartForDimension(0, world.Overworld, "strongholds", cube.Pos{0, 64, 0}, 4096)
+	if !ok {
+		t.Fatal("expected to locate a nearby stronghold")
+	}
+	if info.StructureSet != "strongholds" {
+		t.Fatalf("expected strongholds structure set, got %q", info.StructureSet)
+	}
+	if info.Structure != "stronghold" {
+		t.Fatalf("expected stronghold structure, got %q", info.Structure)
+	}
+	if info.Size[0] <= 0 || info.Size[1] <= 0 || info.Size[2] <= 0 {
+		t.Fatalf("expected positive stronghold bounds, got %+v", info.Size)
+	}
+	if info.StartChunk == (world.ChunkPos{}) {
+		t.Fatal("expected stronghold start chunk to be non-zero")
+	}
+}
+
+func TestGeneratorLocateNearestPlannedStructureStartMatchesPublicStrongholdLookup(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	got, ok := g.LocateNearestPlannedStructureStart("strongholds", cube.Pos{0, 64, 0}, 4096)
+	if !ok {
+		t.Fatal("expected generator stronghold lookup to succeed")
+	}
+	want, ok := LocateNearestPlannedStructureStartForDimension(0, world.Overworld, "strongholds", cube.Pos{0, 64, 0}, 4096)
+	if !ok {
+		t.Fatal("expected public stronghold lookup to succeed")
+	}
+	if got.StartChunk != want.StartChunk || got.Origin != want.Origin || got.Size != want.Size || got.Structure != want.Structure || got.Template != want.Template {
+		t.Fatalf("expected generator stronghold lookup %+v, got %+v", want, got)
+	}
+}
+
+func TestFindPlannedStructureStartUsesGridRadius(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	planner, ok := g.findStructurePlanner("villages")
+	if !ok {
+		t.Fatal("expected village planner")
+	}
+
+	var (
+		want  PlannedStructureInfo
+		found bool
+	)
+	for gridX := -24; gridX <= 24 && !found; gridX++ {
+		for gridZ := -24; gridZ <= 24; gridZ++ {
+			startChunk := randomSpreadPotentialChunk(g.seed, planner.randomPlacement, gridX, gridZ)
+			start, exists := g.planStructureStart(planner, startChunk, -64, 319, nil)
+			if !exists {
+				continue
+			}
+			want = plannedStructureInfoForStart(g, "villages", start)
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected manual grid-radius search to find a village")
+	}
+
+	got, ok := FindPlannedStructureStartForDimension(0, world.Overworld, "villages", 24)
+	if !ok {
+		t.Fatal("expected public grid-radius search to find a village")
+	}
+	if got.StartChunk != want.StartChunk || got.Origin != want.Origin || got.Size != want.Size || got.Structure != want.Structure || got.Template != want.Template {
+		t.Fatalf("expected public grid-radius search %+v, got %+v", want, got)
+	}
+}
+
+func TestPlanStrongholdStructureStart(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForPlanner(t, g, "strongholds", 512)
+	if start.structureName != "stronghold" {
+		t.Fatalf("expected stronghold structure, got %q", start.structureName)
+	}
+	if len(start.pieces) == 0 {
+		t.Fatal("expected planned stronghold pieces")
+	}
+}
+
+func TestGeneratedStrongholdChunkContainsStructureBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, startChunkX, startChunkZ := findPlannedStartForPlanner(t, g, "strongholds", 512)
+	pos := firstPlacedStructureChunkContainingBlocks(t, g, start, startChunkX, startChunkZ, cube.Range{-64, 319}, gen.BiomePlains)
+	if countPlacedStructureBlocksInChunk(t, g, start, pos, cube.Range{-64, 319}, gen.BiomePlains) == 0 {
+		t.Fatal("expected generated stronghold chunk intersecting the planned structure to contain structure blocks")
+	}
+}
+
+func TestPlanMineshaftStructureStart(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForStructureInSet(t, g, "mineshafts", "mineshaft", 32)
+	if start.structureName != "mineshaft" {
+		t.Fatalf("expected mineshaft structure, got %q", start.structureName)
+	}
+	if len(start.pieces) == 0 {
+		t.Fatal("expected planned mineshaft pieces")
+	}
+}
+
+func TestGeneratedMineshaftChunkContainsStructureBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, startChunkX, startChunkZ := findPlannedStartForStructureInSet(t, g, "mineshafts", "mineshaft", 32)
+	pos := firstPlacedStructureChunkContainingBlocks(t, g, start, startChunkX, startChunkZ, cube.Range{-64, 319}, gen.BiomePlains)
+	if countPlacedStructureBlocksInChunk(t, g, start, pos, cube.Range{-64, 319}, gen.BiomePlains) == 0 {
+		t.Fatal("expected generated mineshaft chunk intersecting the planned structure to contain structure blocks")
+	}
+}
+
+func TestStrongholdPortalRoomContainsEndPortalFrames(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, startChunkX, startChunkZ := findPlannedStartForPlanner(t, g, "strongholds", 512)
+
+	minChunkX := floorDiv(start.origin.X(), 16)
+	maxChunkX := floorDiv(start.origin.X()+start.size[0]-1, 16)
+	minChunkZ := floorDiv(start.origin.Z(), 16)
+	maxChunkZ := floorDiv(start.origin.Z()+start.size[2]-1, 16)
+
+	candidates := []world.ChunkPos{{int32(startChunkX), int32(startChunkZ)}}
+	for chunkX := minChunkX; chunkX <= maxChunkX; chunkX++ {
+		for chunkZ := minChunkZ; chunkZ <= maxChunkZ; chunkZ++ {
+			if chunkX == startChunkX && chunkZ == startChunkZ {
+				continue
+			}
+			candidates = append(candidates, world.ChunkPos{int32(chunkX), int32(chunkZ)})
+		}
+	}
+
+	for _, pos := range candidates {
+		c := chunk.New(g.airRID, cube.Range{-64, 319})
+		biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
+		g.placePlannedStructure(c, biomes, int(pos[0]), int(pos[1]), c.Range().Min(), c.Range().Max(), start)
+
+		for y := c.Range().Min(); y <= c.Range().Max(); y++ {
+			for x := 0; x < 16; x++ {
+				for z := 0; z < 16; z++ {
+					b, ok := world.BlockByRuntimeID(c.Block(uint8(x), int16(y), uint8(z), 0))
+					if !ok {
+						continue
+					}
+					name, _ := b.EncodeBlock()
+					if name == "minecraft:end_portal_frame" {
+						return
+					}
+				}
+			}
+		}
+	}
+	t.Fatal("expected generated stronghold structure to contain end portal frames")
 }
 
 func TestGeneratedRuinedPortalChunkContainsTemplateBlocks(t *testing.T) {
@@ -932,16 +1177,143 @@ func TestSwampHutManualBlockStatesResolve(t *testing.T) {
 	}
 }
 
+func TestJungleTempleManualBlockStatesResolve(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForPlanner(t, g, "jungle_temples", 128)
+	seen := make(map[string]struct{})
+	for _, piece := range start.pieces {
+		for _, blockInfo := range piece.manualBlocks {
+			switch blockInfo.state.Name {
+			case "air", "minecraft:air":
+				continue
+			}
+			key := blockInfo.state.Name
+			if len(blockInfo.state.Properties) != 0 {
+				key += "|" + normalizeStructureTestStateProperties(blockInfo.state.Properties)
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			if _, ok := g.lookupTemplateBlock(structureLookupName(blockInfo.state.Name), structureLookupProperties(blockInfo.state.Name, blockInfo.state.Properties)); !ok {
+				t.Fatalf("expected jungle temple manual block state %q %+v to resolve", blockInfo.state.Name, blockInfo.state.Properties)
+			}
+		}
+	}
+}
+
+func TestMineshaftManualBlockStatesResolve(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForStructureInSet(t, g, "mineshafts", "mineshaft", 32)
+	assertManualStructureStatesResolve(t, g, start, "mineshaft")
+}
+
+func TestPlanOceanMonumentStructureStart(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForStructureInSet(t, g, "ocean_monuments", "monument", 96)
+	if start.structureName != "monument" {
+		t.Fatalf("expected monument structure, got %q", start.structureName)
+	}
+	if len(start.pieces) == 0 {
+		t.Fatal("expected planned monument pieces")
+	}
+}
+
+func TestGeneratedOceanMonumentChunkContainsStructureBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, startChunkX, startChunkZ := findPlannedStartForStructureInSet(t, g, "ocean_monuments", "monument", 96)
+	pos := firstPlacedStructureChunkContainingBlocks(t, g, start, startChunkX, startChunkZ, cube.Range{-64, 319}, gen.BiomeDeepOcean)
+	if countPlacedStructureBlocksInChunk(t, g, start, pos, cube.Range{-64, 319}, gen.BiomeDeepOcean) == 0 {
+		t.Fatal("expected generated ocean monument chunk intersecting the planned structure to contain structure blocks")
+	}
+}
+
+func TestOceanMonumentManualBlockStatesResolve(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForStructureInSet(t, g, "ocean_monuments", "monument", 96)
+	assertManualStructureStatesResolve(t, g, start, "ocean monument")
+}
+
+func TestOceanMonumentPreservesWaterInterior(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, startChunkX, startChunkZ := findPlannedStartForStructureInSet(t, g, "ocean_monuments", "monument", 96)
+	pos := firstPlacedStructureChunkContainingBlocks(t, g, start, startChunkX, startChunkZ, cube.Range{-64, 319}, gen.BiomeDeepOcean)
+
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeDeepOcean)
+	g.placePlannedStructure(c, biomes, int(pos[0]), int(pos[1]), c.Range().Min(), c.Range().Max(), start)
+
+	for y := c.Range().Min(); y <= c.Range().Max(); y++ {
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				b, ok := world.BlockByRuntimeID(c.Block(uint8(x), int16(y), uint8(z), 0))
+				if !ok {
+					continue
+				}
+				name, _ := b.EncodeBlock()
+				if name == "minecraft:water" {
+					return
+				}
+			}
+		}
+	}
+	t.Fatal("expected generated ocean monument chunk to retain water blocks inside the structure")
+}
+
+func TestPlanWoodlandMansionStructureStart(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForStructureInSet(t, g, "woodland_mansions", "mansion", 96)
+	if start.structureName != "mansion" {
+		t.Fatalf("expected mansion structure, got %q", start.structureName)
+	}
+	if len(start.pieces) == 0 {
+		t.Fatal("expected planned mansion pieces")
+	}
+}
+
+func TestGeneratedWoodlandMansionChunkContainsStructureBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, startChunkX, startChunkZ := findPlannedStartForStructureInSet(t, g, "woodland_mansions", "mansion", 96)
+	pos := firstPlacedStructureChunkContainingBlocks(t, g, start, startChunkX, startChunkZ, cube.Range{-64, 319}, gen.BiomeDarkForest)
+	if countPlacedStructureBlocksInChunk(t, g, start, pos, cube.Range{-64, 319}, gen.BiomeDarkForest) == 0 {
+		t.Fatal("expected generated woodland mansion chunk intersecting the planned structure to contain structure blocks")
+	}
+}
+
+func TestWoodlandMansionManualBlockStatesResolve(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	start, _, _ := findPlannedStartForStructureInSet(t, g, "woodland_mansions", "mansion", 96)
+	assertManualStructureStatesResolve(t, g, start, "woodland mansion")
+}
+
 func TestPlanNetherComplexStructureStart(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
 	g := NewForDimension(0, world.Nether)
 	start, _, _ := findPlannedStartForPlanner(t, g, "nether_complexes", 96)
-	if start.structureName != "bastion_remnant" {
-		t.Fatalf("expected bastion remnant structure, got %q", start.structureName)
+	if start.structureName != "bastion_remnant" && start.structureName != "fortress" {
+		t.Fatalf("expected bastion remnant or fortress structure, got %q", start.structureName)
 	}
 	if len(start.pieces) == 0 {
-		t.Fatal("expected planned bastion remnant pieces")
+		t.Fatal("expected planned nether complex pieces")
 	}
 }
 
@@ -949,11 +1321,43 @@ func TestGeneratedBastionRemnantChunkContainsStructureBlocks(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
 	g := NewForDimension(0, world.Nether)
-	start, startChunkX, startChunkZ := findPlannedStartForPlanner(t, g, "nether_complexes", 96)
+	start, startChunkX, startChunkZ := findPlannedStartForStructureInSet(t, g, "nether_complexes", "bastion_remnant", 160)
 	pos := firstStructureChunkContainingBlocks(t, g, start, startChunkX, startChunkZ, world.Nether.Range())
 	if countTemplatePaletteBlocksInChunk(t, g, start, pos, world.Nether.Range()) == 0 {
 		t.Fatal("expected generated bastion remnant chunk intersecting the planned bastion to contain structure blocks")
 	}
+}
+
+func TestPlanNetherFortressStructureStart(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := NewForDimension(0, world.Nether)
+	start, _, _ := findPlannedStartForStructureInSet(t, g, "nether_complexes", "fortress", 160)
+	if start.structureName != "fortress" {
+		t.Fatalf("expected fortress structure, got %q", start.structureName)
+	}
+	if len(start.pieces) == 0 {
+		t.Fatal("expected planned fortress pieces")
+	}
+}
+
+func TestGeneratedNetherFortressChunkContainsStructureBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := NewForDimension(0, world.Nether)
+	start, startChunkX, startChunkZ := findPlannedStartForStructureInSet(t, g, "nether_complexes", "fortress", 160)
+	pos := firstPlacedStructureChunkContainingBlocks(t, g, start, startChunkX, startChunkZ, world.Nether.Range(), gen.BiomeNetherWastes)
+	if countPlacedStructureBlocksInChunk(t, g, start, pos, world.Nether.Range(), gen.BiomeNetherWastes) == 0 {
+		t.Fatal("expected generated fortress chunk intersecting the planned structure to contain structure blocks")
+	}
+}
+
+func TestNetherFortressManualBlockStatesResolve(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := NewForDimension(0, world.Nether)
+	start, _, _ := findPlannedStartForStructureInSet(t, g, "nether_complexes", "fortress", 160)
+	assertManualStructureStatesResolve(t, g, start, "fortress")
 }
 
 func TestPlanNetherRuinedPortalStructureStart(t *testing.T) {
@@ -1112,6 +1516,17 @@ func findPlannedStartForPlanner(t *testing.T, g Generator, plannerName string, m
 	return findPlannedStartForPlannerInGridRange(t, g, plannerName, -maxGrid, maxGrid, -maxGrid, maxGrid)
 }
 
+func findPlannedStartForStructureInSet(t *testing.T, g Generator, plannerName, structureName string, maxGrid int) (plannedStructureStart, int, int) {
+	t.Helper()
+
+	start, chunkX, chunkZ, ok := tryFindPlannedStartForStructureInGridRange(g, plannerName, structureName, -maxGrid, maxGrid, -maxGrid, maxGrid)
+	if ok {
+		return start, chunkX, chunkZ
+	}
+	t.Fatalf("did not find a planned start for %s/%s in grid range x=[%d,%d] z=[%d,%d]", plannerName, structureName, -maxGrid, maxGrid, -maxGrid, maxGrid)
+	return plannedStructureStart{}, 0, 0
+}
+
 func findPlannedStartForPlannerInGridRange(t *testing.T, g Generator, plannerName string, minGridX, maxGridX, minGridZ, maxGridZ int) (plannedStructureStart, int, int) {
 	t.Helper()
 
@@ -1129,11 +1544,53 @@ func tryFindPlannedStartForPlannerInGridRange(g Generator, plannerName string, m
 		return plannedStructureStart{}, 0, 0, false
 	}
 	surfaceSampler := newStructureHeightSampler(g, -64, 319)
-	for gridX := minGridX; gridX <= maxGridX; gridX++ {
-		for gridZ := minGridZ; gridZ <= maxGridZ; gridZ++ {
-			startChunk := randomSpreadPotentialChunk(g.seed, planner.placement, gridX, gridZ)
+	if planner.placementType == "concentric_rings" {
+		for _, startChunk := range g.ringPositionsForPlanner(planner) {
+			if int(startChunk[0]) < minGridX || int(startChunk[0]) > maxGridX || int(startChunk[1]) < minGridZ || int(startChunk[1]) > maxGridZ {
+				continue
+			}
 			start, exists := g.planStructureStart(planner, startChunk, -64, 319, surfaceSampler)
 			if exists {
+				return start, int(startChunk[0]), int(startChunk[1]), true
+			}
+		}
+		return plannedStructureStart{}, 0, 0, false
+	}
+	for gridX := minGridX; gridX <= maxGridX; gridX++ {
+		for gridZ := minGridZ; gridZ <= maxGridZ; gridZ++ {
+			startChunk := randomSpreadPotentialChunk(g.seed, planner.randomPlacement, gridX, gridZ)
+			start, exists := g.planStructureStart(planner, startChunk, -64, 319, surfaceSampler)
+			if exists {
+				return start, int(startChunk[0]), int(startChunk[1]), true
+			}
+		}
+	}
+	return plannedStructureStart{}, 0, 0, false
+}
+
+func tryFindPlannedStartForStructureInGridRange(g Generator, plannerName, structureName string, minGridX, maxGridX, minGridZ, maxGridZ int) (plannedStructureStart, int, int, bool) {
+	planner, ok := g.findStructurePlanner(plannerName)
+	if !ok {
+		return plannedStructureStart{}, 0, 0, false
+	}
+	surfaceSampler := newStructureHeightSampler(g, -64, 319)
+	if planner.placementType == "concentric_rings" {
+		for _, startChunk := range g.ringPositionsForPlanner(planner) {
+			if int(startChunk[0]) < minGridX || int(startChunk[0]) > maxGridX || int(startChunk[1]) < minGridZ || int(startChunk[1]) > maxGridZ {
+				continue
+			}
+			start, exists := g.planStructureStart(planner, startChunk, -64, 319, surfaceSampler)
+			if exists && start.structureName == structureName {
+				return start, int(startChunk[0]), int(startChunk[1]), true
+			}
+		}
+		return plannedStructureStart{}, 0, 0, false
+	}
+	for gridX := minGridX; gridX <= maxGridX; gridX++ {
+		for gridZ := minGridZ; gridZ <= maxGridZ; gridZ++ {
+			startChunk := randomSpreadPotentialChunk(g.seed, planner.randomPlacement, gridX, gridZ)
+			start, exists := g.planStructureStart(planner, startChunk, -64, 319, surfaceSampler)
+			if exists && start.structureName == structureName {
 				return start, int(startChunk[0]), int(startChunk[1]), true
 			}
 		}
@@ -1283,6 +1740,31 @@ func countPlacedStructureBlocksInChunk(t *testing.T, g Generator, start plannedS
 		}
 	}
 	return found
+}
+
+func assertManualStructureStatesResolve(t *testing.T, g Generator, start plannedStructureStart, label string) {
+	t.Helper()
+
+	seen := make(map[string]struct{})
+	for _, piece := range start.pieces {
+		for _, blockInfo := range piece.manualBlocks {
+			switch blockInfo.state.Name {
+			case "air", "minecraft:air":
+				continue
+			}
+			key := blockInfo.state.Name
+			if len(blockInfo.state.Properties) != 0 {
+				key += "|" + normalizeStructureTestStateProperties(blockInfo.state.Properties)
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			if _, ok := g.lookupTemplateBlock(structureLookupName(blockInfo.state.Name), structureLookupProperties(blockInfo.state.Name, blockInfo.state.Properties)); !ok {
+				t.Fatalf("expected %s manual block state %q %+v to resolve", label, blockInfo.state.Name, blockInfo.state.Properties)
+			}
+		}
+	}
 }
 
 func normalizeStructureTestStateProperties(properties map[string]string) string {

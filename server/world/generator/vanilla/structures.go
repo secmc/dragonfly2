@@ -3,6 +3,7 @@ package vanilla
 import (
 	"fmt"
 	"hash/fnv"
+	"math"
 	"sort"
 	"sync"
 
@@ -53,13 +54,15 @@ type PlannedStructureInfo struct {
 }
 
 type structurePlanner struct {
-	setName         string
-	placement       gen.RandomSpreadPlacement
-	candidates      []structurePlannerCandidate
-	candidateByName map[string]int
-	totalWeight     int
-	maxBackreachX   int
-	maxBackreachZ   int
+	setName             string
+	placementType       string
+	randomPlacement     gen.RandomSpreadPlacement
+	concentricPlacement gen.ConcentricRingsPlacement
+	candidates          []structurePlannerCandidate
+	candidateByName     map[string]int
+	totalWeight         int
+	maxBackreachX       int
+	maxBackreachZ       int
 }
 
 type structurePlannerCandidate struct {
@@ -122,18 +125,30 @@ func buildStructurePlanners(worldgen *gen.WorldgenRegistry, templates *gen.Struc
 	planners := make([]structurePlanner, 0, len(names))
 	for _, setName := range names {
 		set, err := worldgen.StructureSet(setName)
-		if err != nil || set.Placement.Type != "random_spread" {
-			continue
-		}
-		placement, err := set.Placement.RandomSpread()
 		if err != nil {
 			continue
 		}
 
 		planner := structurePlanner{
 			setName:         setName,
-			placement:       placement,
+			placementType:   normalizeIdentifierName(set.Placement.Type),
 			candidateByName: make(map[string]int),
+		}
+		switch planner.placementType {
+		case "random_spread":
+			placement, err := set.Placement.RandomSpread()
+			if err != nil {
+				continue
+			}
+			planner.randomPlacement = placement
+		case "concentric_rings":
+			placement, err := set.Placement.ConcentricRings()
+			if err != nil {
+				continue
+			}
+			planner.concentricPlacement = placement
+		default:
+			continue
 		}
 		for _, entry := range set.Structures {
 			if entry.Weight <= 0 {
@@ -177,7 +192,7 @@ func buildStructurePlanners(worldgen *gen.WorldgenRegistry, templates *gen.Struc
 				if reachChunks > candidate.maxBackreachZ {
 					candidate.maxBackreachZ = reachChunks
 				}
-			case "igloo", "buried_treasure", "swamp_hut":
+			case "igloo", "buried_treasure", "swamp_hut", "desert_pyramid", "jungle_temple", "stronghold", "fortress", "mineshaft", "ocean_monument", "woodland_mansion":
 				generic, err := def.Generic()
 				if err != nil {
 					continue
@@ -253,7 +268,7 @@ func structureSupportedInDimension(structureName, structureType string, dim worl
 	switch dim {
 	case world.Nether:
 		switch structureName {
-		case "bastion_remnant", "nether_fossil", "ruined_portal_nether":
+		case "bastion_remnant", "fortress", "nether_fossil", "ruined_portal_nether":
 			return true
 		default:
 			return false
@@ -334,33 +349,17 @@ func (g Generator) placeStructures(c *chunk.Chunk, biomes sourceBiomeVolume, chu
 
 	surfaceSampler := newStructureHeightSampler(g, minY, maxY)
 	for _, planner := range g.structurePlanners {
-		g.placeRandomSpreadStructureSet(c, biomes, chunkX, chunkZ, minY, maxY, planner, surfaceSampler)
+		g.placeStructureSet(c, biomes, chunkX, chunkZ, minY, maxY, planner, surfaceSampler)
 	}
 }
 
-func (g Generator) placeRandomSpreadStructureSet(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, planner structurePlanner, surfaceSampler *structureHeightSampler) {
-	startMinChunkX := chunkX - planner.maxBackreachX
-	startMaxChunkX := chunkX + planner.maxBackreachX
-	startMinChunkZ := chunkZ - planner.maxBackreachZ
-	startMaxChunkZ := chunkZ + planner.maxBackreachZ
-
-	minGridX := randomSpreadMinGrid(startMinChunkX, planner.placement.Spacing, planner.placement.Separation)
-	maxGridX := floorDiv(startMaxChunkX, planner.placement.Spacing)
-	minGridZ := randomSpreadMinGrid(startMinChunkZ, planner.placement.Spacing, planner.placement.Separation)
-	maxGridZ := floorDiv(startMaxChunkZ, planner.placement.Spacing)
-
-	for gridX := minGridX; gridX <= maxGridX; gridX++ {
-		for gridZ := minGridZ; gridZ <= maxGridZ; gridZ++ {
-			startChunk := randomSpreadPotentialChunk(g.seed, planner.placement, gridX, gridZ)
-			if int(startChunk[0]) < startMinChunkX || int(startChunk[0]) > startMaxChunkX || int(startChunk[1]) < startMinChunkZ || int(startChunk[1]) > startMaxChunkZ {
-				continue
-			}
-			start, ok := g.planStructureStart(planner, startChunk, minY, maxY, surfaceSampler)
-			if !ok || !structureIntersectsChunk(start, chunkX, chunkZ, minY, maxY) {
-				continue
-			}
-			g.placePlannedStructure(c, biomes, chunkX, chunkZ, minY, maxY, start)
+func (g Generator) placeStructureSet(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, planner structurePlanner, surfaceSampler *structureHeightSampler) {
+	for _, startChunk := range g.plannerPotentialStartChunksNearChunk(planner, chunkX, chunkZ, 0, 0) {
+		start, ok := g.planStructureStart(planner, startChunk, minY, maxY, surfaceSampler)
+		if !ok || !structureIntersectsChunk(start, chunkX, chunkZ, minY, maxY) {
+			continue
 		}
+		g.placePlannedStructure(c, biomes, chunkX, chunkZ, minY, maxY, start)
 	}
 }
 
@@ -384,13 +383,15 @@ func (g Generator) planStructureStart(planner structurePlanner, startChunk world
 	if start, exists, ok := g.structureStarts.Lookup(cacheKey); ok {
 		return start, exists
 	}
-	if !structurePlacementAllows(g.seed, planner.placement, int(startChunk[0]), int(startChunk[1])) {
-		g.structureStarts.Store(cacheKey, plannedStructureStart{}, false)
-		return plannedStructureStart{}, false
-	}
-	if g.structurePlacementExcludedByOtherSet(planner, startChunk, minY, maxY, surfaceSampler) {
-		g.structureStarts.Store(cacheKey, plannedStructureStart{}, false)
-		return plannedStructureStart{}, false
+	if planner.placementType == "random_spread" {
+		if !structurePlacementAllows(g.seed, planner.randomPlacement, int(startChunk[0]), int(startChunk[1])) {
+			g.structureStarts.Store(cacheKey, plannedStructureStart{}, false)
+			return plannedStructureStart{}, false
+		}
+		if g.structurePlacementExcludedByOtherSet(planner, startChunk, minY, maxY, surfaceSampler) {
+			g.structureStarts.Store(cacheKey, plannedStructureStart{}, false)
+			return plannedStructureStart{}, false
+		}
 	}
 
 	startX := int(startChunk[0]) * 16
@@ -404,6 +405,10 @@ func (g Generator) planStructureStart(planner structurePlanner, startChunk world
 
 	candidate, ok := g.chooseStructureForPlanner(planner, surfaceBiome, startChunk)
 	if !ok {
+		g.structureStarts.Store(cacheKey, plannedStructureStart{}, false)
+		return plannedStructureStart{}, false
+	}
+	if !g.structurePlanningAllowedAt(candidate, startX, startZ, surfaceY) {
 		g.structureStarts.Store(cacheKey, plannedStructureStart{}, false)
 		return plannedStructureStart{}, false
 	}
@@ -426,7 +431,7 @@ func (g Generator) planStructureStart(planner structurePlanner, startChunk world
 		templateName = startTemplate.name
 		pieces, overallBounds, rootOrigin, rootSize, okBuild = g.buildPlannedStructure(candidate, startTemplate, startX, startZ, surfaceSampler, &rng)
 	} else {
-		templateName, pieces, overallBounds, rootOrigin, rootSize, okBuild = g.buildPlannedDirectStructure(candidate, planner.placement, startChunk, startX, startZ, surfaceY, surfaceSampler, &rng)
+		templateName, pieces, overallBounds, rootOrigin, rootSize, okBuild = g.buildPlannedDirectStructure(candidate, planner.randomPlacement, startChunk, startX, startZ, surfaceY, surfaceSampler, &rng)
 	}
 	if !okBuild || len(pieces) == 0 {
 		g.structureStarts.Store(cacheKey, plannedStructureStart{}, false)
@@ -450,8 +455,8 @@ func (g Generator) planStructureStart(planner structurePlanner, startChunk world
 }
 
 func (g Generator) structurePlacementExcludedByOtherSet(planner structurePlanner, startChunk world.ChunkPos, minY, maxY int, surfaceSampler *structureHeightSampler) bool {
-	otherSet := normalizeStructureName(planner.placement.ExclusionZone.OtherSet)
-	chunkCount := planner.placement.ExclusionZone.ChunkCount
+	otherSet := normalizeStructureName(planner.randomPlacement.ExclusionZone.OtherSet)
+	chunkCount := planner.randomPlacement.ExclusionZone.ChunkCount
 	if otherSet == "" || chunkCount <= 0 || otherSet == planner.setName {
 		return false
 	}
@@ -468,20 +473,12 @@ func (g Generator) structurePlacementExcludedByOtherSet(planner structurePlanner
 	maxChunkX := int(startChunk[0]) + chunkCount
 	minChunkZ := int(startChunk[1]) - chunkCount
 	maxChunkZ := int(startChunk[1]) + chunkCount
-	minGridX := randomSpreadMinGrid(minChunkX, otherPlanner.placement.Spacing, otherPlanner.placement.Separation)
-	maxGridX := floorDiv(maxChunkX, otherPlanner.placement.Spacing)
-	minGridZ := randomSpreadMinGrid(minChunkZ, otherPlanner.placement.Spacing, otherPlanner.placement.Separation)
-	maxGridZ := floorDiv(maxChunkZ, otherPlanner.placement.Spacing)
-
-	for gridX := minGridX; gridX <= maxGridX; gridX++ {
-		for gridZ := minGridZ; gridZ <= maxGridZ; gridZ++ {
-			otherStartChunk := randomSpreadPotentialChunk(g.seed, otherPlanner.placement, gridX, gridZ)
-			if int(otherStartChunk[0]) < minChunkX || int(otherStartChunk[0]) > maxChunkX || int(otherStartChunk[1]) < minChunkZ || int(otherStartChunk[1]) > maxChunkZ {
-				continue
-			}
-			if _, exists := g.planStructureStart(otherPlanner, otherStartChunk, minY, maxY, surfaceSampler); exists {
-				return true
-			}
+	for _, otherStartChunk := range g.plannerPotentialStartChunksNearChunk(otherPlanner, int(startChunk[0]), int(startChunk[1]), chunkCount, chunkCount) {
+		if int(otherStartChunk[0]) < minChunkX || int(otherStartChunk[0]) > maxChunkX || int(otherStartChunk[1]) < minChunkZ || int(otherStartChunk[1]) > maxChunkZ {
+			continue
+		}
+		if _, exists := g.planStructureStart(otherPlanner, otherStartChunk, minY, maxY, surfaceSampler); exists {
+			return true
 		}
 	}
 	return false
@@ -525,6 +522,15 @@ func (g Generator) chooseStructureForPlanner(planner structurePlanner, biome gen
 		pick -= candidate.weight
 	}
 	return structurePlannerCandidate{}, false
+}
+
+func (g Generator) structurePlanningAllowedAt(candidate structurePlannerCandidate, startX, startZ, surfaceY int) bool {
+	switch candidate.structureType {
+	case "ocean_monument":
+		return g.oceanMonumentSurroundingsAllowAt(startX, startZ, surfaceY)
+	default:
+		return true
+	}
 }
 
 func chooseStartTemplate(candidate structurePlannerCandidate, rng *gen.Xoroshiro128) (weightedStartTemplate, bool) {
@@ -815,6 +821,77 @@ func FindPlannedStructureStart(seed int64, setName string, maxGridDistance int) 
 	return FindPlannedStructureStartForDimension(seed, world.Overworld, setName, maxGridDistance)
 }
 
+func (g Generator) LocateNearestPlannedStructureStart(setName string, origin cube.Pos, maxChunkDistance int) (PlannedStructureInfo, bool) {
+	return g.locateNearestPlannedStructureStart(setName, origin, maxChunkDistance)
+}
+
+func LocateNearestPlannedStructureStart(seed int64, setName string, origin cube.Pos, maxChunkDistance int) (PlannedStructureInfo, bool) {
+	return LocateNearestPlannedStructureStartForDimension(seed, world.Overworld, setName, origin, maxChunkDistance)
+}
+
+func LocateNearestPlannedStructureStartForDimension(seed int64, dim world.Dimension, setName string, origin cube.Pos, maxChunkDistance int) (PlannedStructureInfo, bool) {
+	g := NewForDimension(seed, dim)
+	return g.locateNearestPlannedStructureStart(setName, origin, maxChunkDistance)
+}
+
+func (g Generator) locateNearestPlannedStructureStart(setName string, origin cube.Pos, maxChunkDistance int) (PlannedStructureInfo, bool) {
+	planner, ok := g.findStructurePlanner(setName)
+	if !ok {
+		return PlannedStructureInfo{}, false
+	}
+
+	originChunkX := floorDiv(origin.X(), 16)
+	originChunkZ := floorDiv(origin.Z(), 16)
+	startChunks := g.plannerPotentialStartChunksNearChunk(planner, originChunkX, originChunkZ, maxChunkDistance, maxChunkDistance)
+	if len(startChunks) == 0 {
+		return PlannedStructureInfo{}, false
+	}
+	if planner.placementType == "concentric_rings" {
+		sort.Slice(startChunks, func(i, j int) bool {
+			dxI := int(startChunks[i][0]) - originChunkX
+			dzI := int(startChunks[i][1]) - originChunkZ
+			dxJ := int(startChunks[j][0]) - originChunkX
+			dzJ := int(startChunks[j][1]) - originChunkZ
+			return dxI*dxI+dzI*dzI < dxJ*dxJ+dzJ*dzJ
+		})
+		for _, startChunk := range startChunks {
+			start, exists := g.planStructureStart(planner, startChunk, -64, 319, nil)
+			if !exists {
+				continue
+			}
+			return plannedStructureInfoForStart(g, setName, start), true
+		}
+		return PlannedStructureInfo{}, false
+	}
+
+	var (
+		bestStart plannedStructureStart
+		bestDist  = math.MaxFloat64
+		found     bool
+	)
+	for _, startChunk := range startChunks {
+		start, exists := g.planStructureStart(planner, startChunk, -64, 319, nil)
+		if !exists {
+			continue
+		}
+		infoOrigin, infoSize := structureInfoBounds(start)
+		centerX := float64(infoOrigin.X()) + float64(max(infoSize[0], 1))/2
+		centerZ := float64(infoOrigin.Z()) + float64(max(infoSize[2], 1))/2
+		deltaX := centerX - float64(origin.X())
+		deltaZ := centerZ - float64(origin.Z())
+		dist := deltaX*deltaX + deltaZ*deltaZ
+		if !found || dist < bestDist {
+			bestDist = dist
+			bestStart = start
+			found = true
+		}
+	}
+	if !found {
+		return PlannedStructureInfo{}, false
+	}
+	return plannedStructureInfoForStart(g, setName, bestStart), true
+}
+
 func FindPlannedStructureStartForDimension(seed int64, dim world.Dimension, setName string, maxGridDistance int) (PlannedStructureInfo, bool) {
 	g := NewForDimension(seed, dim)
 
@@ -823,51 +900,88 @@ func FindPlannedStructureStartForDimension(seed int64, dim world.Dimension, setN
 		return PlannedStructureInfo{}, false
 	}
 
-	for gridX := -maxGridDistance; gridX <= maxGridDistance; gridX++ {
-		for gridZ := -maxGridDistance; gridZ <= maxGridDistance; gridZ++ {
-			startChunk := randomSpreadPotentialChunk(seed, planner.placement, gridX, gridZ)
-			start, exists := g.planStructureStart(planner, startChunk, -64, 319, nil)
-			if !exists {
-				continue
-			}
-			paletteNames := make([]string, 0, 16)
-			seen := make(map[string]struct{}, 32)
-			for _, piece := range start.pieces {
-				for _, placement := range piece.element.placements {
-					template, err := g.structureTemplates.Template(placement.templateName)
-					if err != nil {
-						continue
-					}
-					for _, state := range template.Palette {
-						switch state.Name {
-						case "minecraft:air", "minecraft:jigsaw", "minecraft:structure_void":
-							continue
-						}
-						if _, ok := seen[state.Name]; ok {
-							continue
-						}
-						seen[state.Name] = struct{}{}
-						paletteNames = append(paletteNames, state.Name)
-					}
-				}
-			}
-			sort.Strings(paletteNames)
-			infoOrigin := start.rootOrigin
-			infoSize := start.rootSize
-			if infoSize[0] <= 0 || infoSize[1] <= 0 || infoSize[2] <= 0 {
-				infoOrigin = start.origin
-				infoSize = start.size
-			}
-			return PlannedStructureInfo{
-				StructureSet: setName,
-				Structure:    start.structureName,
-				Template:     start.templateName,
-				StartChunk:   start.startChunk,
-				Origin:       infoOrigin,
-				Size:         infoSize,
-				PaletteNames: paletteNames,
-			}, true
+	for _, startChunk := range g.plannerPotentialStartChunksWithinGridDistance(planner, maxGridDistance) {
+		start, exists := g.planStructureStart(planner, startChunk, -64, 319, nil)
+		if !exists {
+			continue
 		}
+		return plannedStructureInfoForStart(g, setName, start), true
 	}
 	return PlannedStructureInfo{}, false
+}
+
+func plannedStructureInfoForStart(g Generator, setName string, start plannedStructureStart) PlannedStructureInfo {
+	paletteNames := make([]string, 0, 16)
+	seen := make(map[string]struct{}, 32)
+	for _, piece := range start.pieces {
+		for _, placement := range piece.element.placements {
+			template, err := g.structureTemplates.Template(placement.templateName)
+			if err != nil {
+				continue
+			}
+			for _, state := range template.Palette {
+				switch state.Name {
+				case "minecraft:air", "minecraft:jigsaw", "minecraft:structure_void":
+					continue
+				}
+				if _, ok := seen[state.Name]; ok {
+					continue
+				}
+				seen[state.Name] = struct{}{}
+				paletteNames = append(paletteNames, state.Name)
+			}
+		}
+	}
+	sort.Strings(paletteNames)
+	infoOrigin, infoSize := structureInfoBounds(start)
+	return PlannedStructureInfo{
+		StructureSet: setName,
+		Structure:    start.structureName,
+		Template:     start.templateName,
+		StartChunk:   start.startChunk,
+		Origin:       infoOrigin,
+		Size:         infoSize,
+		PaletteNames: paletteNames,
+	}
+}
+
+func (g Generator) plannerPotentialStartChunksWithinGridDistance(planner structurePlanner, maxGridDistance int) []world.ChunkPos {
+	if maxGridDistance < 0 {
+		return nil
+	}
+	if planner.placementType == "concentric_rings" {
+		positions := g.ringPositionsForPlanner(planner)
+		if len(positions) == 0 {
+			return nil
+		}
+		out := make([]world.ChunkPos, 0, len(positions))
+		limitX := maxGridDistance + planner.maxBackreachX
+		limitZ := maxGridDistance + planner.maxBackreachZ
+		for _, startChunk := range positions {
+			if abs(int(startChunk[0])) > limitX || abs(int(startChunk[1])) > limitZ {
+				continue
+			}
+			out = append(out, startChunk)
+		}
+		return out
+	}
+
+	gridSpan := maxGridDistance*2 + 1
+	out := make([]world.ChunkPos, 0, max(0, gridSpan*gridSpan))
+	for gridX := -maxGridDistance; gridX <= maxGridDistance; gridX++ {
+		for gridZ := -maxGridDistance; gridZ <= maxGridDistance; gridZ++ {
+			out = append(out, randomSpreadPotentialChunk(g.seed, planner.randomPlacement, gridX, gridZ))
+		}
+	}
+	return out
+}
+
+func structureInfoBounds(start plannedStructureStart) (cube.Pos, [3]int) {
+	infoOrigin := start.rootOrigin
+	infoSize := start.rootSize
+	if infoSize[0] <= 0 || infoSize[1] <= 0 || infoSize[2] <= 0 {
+		infoOrigin = start.origin
+		infoSize = start.size
+	}
+	return infoOrigin, infoSize
 }

@@ -760,6 +760,20 @@ func rotatePlacedStructureState(state gen.BlockState, rotation structureRotation
 			props[key] = rotateHorizontalDirectionName(value, rotation)
 		}
 	}
+	if value, ok := props["minecraft:cardinal_direction"]; ok {
+		props["minecraft:cardinal_direction"] = rotateHorizontalDirectionName(value, rotation)
+	}
+	if value, ok := props["torch_facing_direction"]; ok {
+		if value == "north" || value == "east" || value == "south" || value == "west" {
+			props["torch_facing_direction"] = rotateHorizontalDirectionName(value, rotation)
+		}
+	}
+	if value, ok := props["facing_direction"]; ok {
+		props["facing_direction"] = rotateFacingDirectionProperty(value, rotation)
+	}
+	if value, ok := props["weirdo_direction"]; ok {
+		props["weirdo_direction"] = rotateWeirdoDirectionProperty(value, rotation)
+	}
 	if value, ok := props["axis"]; ok {
 		props["axis"] = rotateAxisName(value, rotation)
 	}
@@ -850,6 +864,60 @@ func rotateStructureRotationProperty(value string, rotation structureRotation) s
 		n = (n + 12) % 16
 	}
 	return strconv.Itoa(n)
+}
+
+func rotateFacingDirectionProperty(value string, rotation structureRotation) string {
+	switch value {
+	case "2":
+		return structureFacingDirectionValue(rotateHorizontalDirectionName("north", rotation))
+	case "3":
+		return structureFacingDirectionValue(rotateHorizontalDirectionName("south", rotation))
+	case "4":
+		return structureFacingDirectionValue(rotateHorizontalDirectionName("west", rotation))
+	case "5":
+		return structureFacingDirectionValue(rotateHorizontalDirectionName("east", rotation))
+	default:
+		return value
+	}
+}
+
+func rotateWeirdoDirectionProperty(value string, rotation structureRotation) string {
+	switch rotation {
+	case structureRotationClockwise90:
+		switch value {
+		case "3":
+			return "0"
+		case "0":
+			return "2"
+		case "2":
+			return "1"
+		case "1":
+			return "3"
+		}
+	case structureRotationClockwise180:
+		switch value {
+		case "3":
+			return "2"
+		case "0":
+			return "1"
+		case "2":
+			return "3"
+		case "1":
+			return "0"
+		}
+	case structureRotationCounterclockwise90:
+		switch value {
+		case "3":
+			return "1"
+		case "1":
+			return "2"
+		case "2":
+			return "0"
+		case "0":
+			return "3"
+		}
+	}
+	return value
 }
 
 func rotateShapeProperty(value string, rotation structureRotation) string {

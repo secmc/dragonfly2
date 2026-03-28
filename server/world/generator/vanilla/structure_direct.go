@@ -21,6 +21,20 @@ func estimateDirectStructureBackreach(structureName, structureType string) (int,
 		return 1, 1
 	case "swamp_hut":
 		return 1, 1
+	case "desert_pyramid":
+		return 2, 2
+	case "jungle_temple":
+		return 2, 2
+	case "stronghold":
+		return 4, 4
+	case "fortress":
+		return 3, 3
+	case "mineshaft":
+		return 3, 3
+	case "ocean_monument":
+		return 4, 4
+	case "woodland_mansion":
+		return 4, 4
 	case "buried_treasure":
 		return 0, 0
 	case "nether_fossil":
@@ -183,6 +197,21 @@ func structureBiomeTagAllows(tag string, biome gen.Biome) bool {
 		return biomeMatchesWorldgenTag("is_ocean", biome)
 	case "has_structure/shipwreck_beached":
 		return biomeMatchesWorldgenTag("is_beach", biome)
+	case "stronghold_biased_to":
+		switch biome {
+		case gen.BiomePlains, gen.BiomeSunflowerPlains, gen.BiomeSnowyPlains, gen.BiomeIceSpikes, gen.BiomeDesert,
+			gen.BiomeForest, gen.BiomeFlowerForest, gen.BiomeBirchForest, gen.BiomeDarkForest, gen.BiomePaleGarden,
+			gen.BiomeTallBirchForest, gen.BiomeOldGrowthPineTaiga, gen.BiomeOldGrowthSpruceTaiga, gen.BiomeTaiga,
+			gen.BiomeSnowyTaiga, gen.BiomeSavanna, gen.BiomeSavannaPlateau, gen.BiomeWindsweptHills,
+			gen.BiomeGravellyMountains, gen.BiomeWindsweptForest, gen.BiomeWindsweptSavanna, gen.BiomeJungle,
+			gen.BiomeSparseJungle, gen.BiomeBambooJungle, gen.BiomeBadlands, gen.BiomeErodedBadlands,
+			gen.BiomeWoodedBadlands, gen.BiomeMeadow, gen.BiomeCherryGrove, gen.BiomeGrove, gen.BiomeSnowySlopes,
+			gen.BiomeFrozenPeaks, gen.BiomeJaggedPeaks, gen.BiomeStonyPeaks, gen.BiomeMushroomFields,
+			gen.BiomeDripstoneCaves, gen.BiomeLushCaves:
+			return true
+		default:
+			return false
+		}
 	case "has_structure/stronghold":
 		return biomeMatchesWorldgenTag("is_overworld", biome)
 	case "has_structure/swamp_hut":
@@ -269,6 +298,20 @@ func (g Generator) buildPlannedDirectStructure(
 		return g.buildBuriedTreasureStructure(startX, startZ, surfaceSampler, placement)
 	case "swamp_hut":
 		return g.buildSwampHutStructure(startChunk, startX, startZ, surfaceY, surfaceSampler, rng)
+	case "desert_pyramid":
+		return g.buildDesertPyramidStructure(startX, startZ, surfaceSampler, rng)
+	case "jungle_temple":
+		return g.buildJungleTempleStructure(startX, startZ, surfaceSampler, rng)
+	case "stronghold":
+		return g.buildStrongholdStructure(startChunk, startX, startZ, surfaceSampler, rng)
+	case "fortress":
+		return g.buildFortressStructure(candidate, startChunk, startX, startZ, surfaceSampler, rng)
+	case "mineshaft":
+		return g.buildMineshaftStructure(candidate, startChunk, startX, startZ, surfaceSampler, rng)
+	case "ocean_monument":
+		return g.buildOceanMonumentStructure(candidate, startChunk, startX, startZ, surfaceSampler, rng)
+	case "woodland_mansion":
+		return g.buildWoodlandMansionStructure(candidate, startChunk, startX, startZ, surfaceSampler, rng)
 	case "nether_fossil":
 		return g.buildNetherFossilStructure(candidate.netherFossil, startX, startZ, surfaceSampler, rng)
 	case "end_city":

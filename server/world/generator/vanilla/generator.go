@@ -40,6 +40,7 @@ type Generator struct {
 	structureResolver  *structureResolver
 	structurePlanners  []structurePlanner
 	structureStarts    *structureStartCache
+	structureRings     *structureRingCache
 	surface            *gen.SurfaceRuntime
 	surfaceBlockCache  *blockRIDCache
 	templateBlockCache *stringRIDCache
@@ -101,6 +102,7 @@ func NewForDimension(seed int64, dim world.Dimension) Generator {
 		structureResolver:  structureResolver,
 		structurePlanners:  structurePlanners,
 		structureStarts:    newStructureStartCache(),
+		structureRings:     newStructureRingCache(),
 		surface:            surfaceRuntime,
 		surfaceBlockCache:  newBlockRIDCache(),
 		templateBlockCache: newStringRIDCache(),
@@ -117,6 +119,11 @@ func NewForDimension(seed int64, dim world.Dimension) Generator {
 		lavaRID:            world.BlockRuntimeID(block.Lava{Still: true, Depth: 8}),
 		forceBottomBedrock: forceBottomBedrock,
 	}
+}
+
+// Seed returns the seed configured for the generator.
+func (g Generator) Seed() int64 {
+	return g.seed
 }
 
 func sharedStructureResources() (*gen.WorldgenRegistry, *gen.StructureTemplateRegistry, *structureResolver) {

@@ -3,6 +3,9 @@ package entity
 import (
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/world"
+	"github.com/df-mc/dragonfly/server/world/generator/vanilla"
+	"github.com/go-gl/mathgl/mgl64"
+	"time"
 )
 
 // NewEyeOfEnder creates a throwable eye of ender signal entity.
@@ -12,10 +15,137 @@ func NewEyeOfEnder(opts world.EntitySpawnOpts, owner world.Entity) *world.Entity
 	return opts.New(EyeOfEnderType, conf)
 }
 
-var eyeOfEnderConf = ProjectileBehaviourConfig{
+var eyeOfEnderConf = EyeOfEnderBehaviourConfig{}
+
+type EyeOfEnderBehaviourConfig struct {
+	Owner *world.EntityHandle
+}
+
+func (conf EyeOfEnderBehaviourConfig) Apply(data *world.EntityData) {
+	data.Data = conf.New()
+}
+
+func (conf EyeOfEnderBehaviourConfig) New() *EyeOfEnderBehaviour {
+	projectileConf := eyeOfEnderProjectileConf
+	projectileConf.Owner = conf.Owner
+	return &EyeOfEnderBehaviour{
+		conf:       conf,
+		projectile: projectileConf.New(),
+		lifetime:   4 * time.Second,
+	}
+}
+
+var eyeOfEnderProjectileConf = ProjectileBehaviourConfig{
 	Gravity: 0.02,
 	Drag:    0.01,
 	Damage:  -1,
+}
+
+type EyeOfEnderBehaviour struct {
+	conf       EyeOfEnderBehaviourConfig
+	projectile *ProjectileBehaviour
+	target     mgl64.Vec3
+	lifetime   time.Duration
+	resolved   bool
+	hasTarget  bool
+	close      bool
+}
+
+func (b *EyeOfEnderBehaviour) Owner() *world.EntityHandle {
+	return b.conf.Owner
+}
+
+func (b *EyeOfEnderBehaviour) Tick(e *Ent, tx *world.Tx) *Movement {
+	if b.close {
+		_ = e.Close()
+		return nil
+	}
+	if !b.resolved {
+		b.resolveTarget(tx, e.Position())
+	}
+	if b.hasTarget {
+		e.data.Vel = eyeOfEnderVelocityToward(e.data.Pos, e.data.Vel, b.target)
+	}
+
+	m := b.projectile.Tick(e, tx)
+	if m == nil {
+		return nil
+	}
+	if b.hasTarget {
+		delta := b.target.Sub(m.Position())
+		delta[1] = 0
+		if delta.Len() < 12 {
+			b.close = true
+		}
+	}
+	if e.Age() >= b.lifetime {
+		b.close = true
+	}
+	return m
+}
+
+type eyeOfEnderStructureLocator interface {
+	LocateNearestPlannedStructureStart(setName string, origin cube.Pos, maxChunkDistance int) (vanilla.PlannedStructureInfo, bool)
+}
+
+func (b *EyeOfEnderBehaviour) resolveTarget(tx *world.Tx, pos mgl64.Vec3) {
+	b.resolved = true
+
+	locator, ok := tx.World().Generator().(eyeOfEnderStructureLocator)
+	if !ok || tx.World().Dimension() != world.Overworld {
+		return
+	}
+	info, ok := locator.LocateNearestPlannedStructureStart(
+		"strongholds",
+		cube.PosFromVec3(pos),
+		4096,
+	)
+	if !ok {
+		return
+	}
+
+	sizeX := max(info.Size[0], 1)
+	sizeZ := max(info.Size[2], 1)
+	b.target = mgl64.Vec3{
+		float64(info.Origin.X()) + float64(sizeX)/2,
+		pos[1],
+		float64(info.Origin.Z()) + float64(sizeZ)/2,
+	}
+	b.hasTarget = true
+}
+
+func eyeOfEnderVelocityToward(pos, vel, target mgl64.Vec3) mgl64.Vec3 {
+	delta := target.Sub(pos)
+	delta[1] = 0
+	dist := delta.Len()
+	if dist < 0.001 {
+		return vel.Mul(0.8)
+	}
+
+	dir := delta.Mul(1 / dist)
+	speed := clampFloat(0.55+dist/96.0, 0.7, 1.6)
+	desiredY := 0.08
+	if dist < 64 {
+		desiredY = 0.05
+	}
+	if dist < 24 {
+		desiredY = 0.02
+	}
+	desired := mgl64.Vec3{dir[0] * speed, desiredY, dir[2] * speed}
+	if vel.Len() == 0 {
+		return desired
+	}
+	return vel.Mul(0.72).Add(desired.Mul(0.28))
+}
+
+func clampFloat(value, minValue, maxValue float64) float64 {
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }
 
 // EyeOfEnderType is a world.EntityType implementation for thrown eyes of

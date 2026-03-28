@@ -45,31 +45,15 @@ func newStructureTerrainSampler(g Generator, chunkX, chunkZ, minY, maxY int) *st
 	sampler := &structureTerrainSampler{}
 	surfaceSampler := newStructureHeightSampler(g, minY, maxY)
 	for _, planner := range g.structurePlanners {
-		startMinChunkX := chunkX - planner.maxBackreachX - 1
-		startMaxChunkX := chunkX + planner.maxBackreachX + 1
-		startMinChunkZ := chunkZ - planner.maxBackreachZ - 1
-		startMaxChunkZ := chunkZ + planner.maxBackreachZ + 1
-
-		minGridX := randomSpreadMinGrid(startMinChunkX, planner.placement.Spacing, planner.placement.Separation)
-		maxGridX := floorDiv(startMaxChunkX, planner.placement.Spacing)
-		minGridZ := randomSpreadMinGrid(startMinChunkZ, planner.placement.Spacing, planner.placement.Separation)
-		maxGridZ := floorDiv(startMaxChunkZ, planner.placement.Spacing)
-
-		for gridX := minGridX; gridX <= maxGridX; gridX++ {
-			for gridZ := minGridZ; gridZ <= maxGridZ; gridZ++ {
-				startChunk := randomSpreadPotentialChunk(g.seed, planner.placement, gridX, gridZ)
-				if int(startChunk[0]) < startMinChunkX || int(startChunk[0]) > startMaxChunkX || int(startChunk[1]) < startMinChunkZ || int(startChunk[1]) > startMaxChunkZ {
-					continue
-				}
-				start, ok := g.planStructureStart(planner, startChunk, minY, maxY, surfaceSampler)
-				if !ok || start.terrainAdaptation == "" || start.terrainAdaptation == "none" {
-					continue
-				}
-				if !structureIntersectsChunkHorizontalMargin(start, chunkX, chunkZ, structureTerrainMargin) {
-					continue
-				}
-				sampler.appendStart(start, chunkX, chunkZ)
+		for _, startChunk := range g.plannerPotentialStartChunksNearChunk(planner, chunkX, chunkZ, 1, 1) {
+			start, ok := g.planStructureStart(planner, startChunk, minY, maxY, surfaceSampler)
+			if !ok || start.terrainAdaptation == "" || start.terrainAdaptation == "none" {
+				continue
 			}
+			if !structureIntersectsChunkHorizontalMargin(start, chunkX, chunkZ, structureTerrainMargin) {
+				continue
+			}
+			sampler.appendStart(start, chunkX, chunkZ)
 		}
 	}
 	if sampler.empty() {

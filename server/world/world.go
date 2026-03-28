@@ -155,6 +155,11 @@ func (w *World) EntityRegistry() EntityRegistry {
 	return w.conf.Entities
 }
 
+// Generator returns the generator configured for the world.
+func (w *World) Generator() Generator {
+	return w.conf.Generator
+}
+
 // block reads a block from the position passed. If a chunk is not yet loaded
 // at that position, the chunk is loaded, or generated if it could not be found
 // in the world save, and the block returned.
