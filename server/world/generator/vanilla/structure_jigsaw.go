@@ -31,6 +31,7 @@ type resolvedStructurePool struct {
 type resolvedPoolElement struct {
 	elementType string
 	projection  string
+	occupies    bool
 	placements  []structureTemplatePlacement
 	features    []structureFeaturePlacement
 	jigsaws     []structureJigsaw
@@ -91,9 +92,17 @@ type plannedStructurePiece struct {
 	pivot                cube.Pos
 	useTemplateTransform bool
 	bounds               structureBox
+	groundLevelDelta     int
+	junctions            []plannedStructureJunction
 	manualBlocks         []plannedStructureBlock
 	genTag               int
 	rootPiece            bool
+}
+
+type plannedStructureJunction struct {
+	sourceX       int
+	sourceGroundY int
+	sourceZ       int
 }
 
 type structureRotation uint8
@@ -136,9 +145,10 @@ type featurePoolElementDef struct {
 }
 
 type pendingStructurePiece struct {
-	piece    plannedStructurePiece
-	depth    int
-	priority int
+	piece      plannedStructurePiece
+	pieceIndex int
+	depth      int
+	priority   int
 }
 
 func newStructureResolver(worldgen *gen.WorldgenRegistry, templates *gen.StructureTemplateRegistry) *structureResolver {
@@ -304,6 +314,7 @@ func (r *structureResolver) resolvePoolElement(def gen.TemplatePoolElementDef) (
 		return precomputeResolvedPoolElementJigsaws(resolvedPoolElement{
 			elementType: def.ElementType,
 			projection:  normalizeIdentifierName(single.Projection),
+			occupies:    templateHasPlaceableBlocks(template),
 			placements: []structureTemplatePlacement{{
 				templateName: single.Location,
 				ignoreAir:    def.ElementType == "legacy_single_pool_element",
@@ -328,6 +339,7 @@ func (r *structureResolver) resolvePoolElement(def gen.TemplatePoolElementDef) (
 			}
 			out.placements = append(out.placements, resolved.placements...)
 			out.features = append(out.features, resolved.features...)
+			out.occupies = out.occupies || resolved.occupies
 			out.size = maxStructureSize(out.size, resolved.size)
 			if i == 0 {
 				out.jigsaws = append(out.jigsaws, resolved.jigsaws...)
@@ -342,6 +354,7 @@ func (r *structureResolver) resolvePoolElement(def gen.TemplatePoolElementDef) (
 		return precomputeResolvedPoolElementJigsaws(resolvedPoolElement{
 			elementType: def.ElementType,
 			projection:  normalizeIdentifierName(raw.Projection),
+			occupies:    true,
 			features: []structureFeaturePlacement{{
 				featureName: normalizeIdentifierName(raw.Feature),
 			}},
@@ -401,6 +414,21 @@ func extractTemplateJigsaws(template gen.StructureTemplate) []structureJigsaw {
 		})
 	}
 	return jigsaws
+}
+
+func templateHasPlaceableBlocks(template gen.StructureTemplate) bool {
+	for _, block := range template.Blocks {
+		if block.State < 0 || block.State >= len(template.Palette) {
+			continue
+		}
+		switch template.Palette[block.State].Name {
+		case "minecraft:air", "minecraft:jigsaw", "minecraft:structure_void", "minecraft:structure_block":
+			continue
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func parseJigsawOrientation(properties map[string]any) (structureDirection, structureDirection) {
@@ -625,6 +653,13 @@ func (element resolvedPoolElement) worldBox(origin cube.Pos, rotation structureR
 		maxY: origin[1] + size[1] - 1,
 		maxZ: origin[2] + size[2] - 1,
 	}
+}
+
+func (element resolvedPoolElement) occupiedBox(origin cube.Pos, rotation structureRotation) structureBox {
+	if !element.occupies {
+		return emptyStructureBox()
+	}
+	return element.worldBox(origin, rotation)
 }
 
 func emptyStructureBox() structureBox {
@@ -958,6 +993,7 @@ func (g Generator) buildPlannedStructure(
 	rootElement := precomputeResolvedPoolElementJigsaws(resolvedPoolElement{
 		elementType: "start",
 		projection:  start.projection,
+		occupies:    start.occupies,
 		placements: []structureTemplatePlacement{{
 			templateName: start.name,
 			ignoreAir:    start.ignoreAir,
@@ -1004,17 +1040,18 @@ func (g Generator) buildPlannedStructure(
 	rootBox = rootElement.worldBox(rootOrigin, rootRotation)
 
 	rootPiece := plannedStructurePiece{
-		element:   rootElement,
-		origin:    rootOrigin,
-		rotation:  rootRotation,
-		bounds:    rootBox,
-		rootPiece: true,
+		element:          rootElement,
+		origin:           rootOrigin,
+		rotation:         rootRotation,
+		bounds:           rootBox,
+		groundLevelDelta: structurePoolElementGroundLevelDelta(rootElement),
+		rootPiece:        true,
 	}
 
 	pieces := []plannedStructurePiece{rootPiece}
 	occupied := make([]structureBox, 0, candidate.jigsaw.Size+1)
-	if !rootBox.empty() {
-		occupied = append(occupied, rootBox)
+	if rootOccupied := rootElement.occupiedBox(rootOrigin, rootRotation); !rootOccupied.empty() {
+		occupied = append(occupied, rootOccupied)
 	}
 	overall := rootBox
 
@@ -1022,7 +1059,7 @@ func (g Generator) buildPlannedStructure(
 		return pieces, overall, rootOrigin, rotatedStructureSize(rootElement.size, rootRotation), true
 	}
 
-	queue := []pendingStructurePiece{{piece: rootPiece, depth: 0}}
+	queue := []pendingStructurePiece{{piece: rootPiece, pieceIndex: 0, depth: 0}}
 	aliasLookup := resolveStructurePoolAliases(candidate.jigsaw.PoolAliases, cube.Pos{startX, baseY, startZ}, g.seed)
 	var (
 		candidates      []resolvedPoolElement
@@ -1097,36 +1134,64 @@ func (g Generator) buildPlannedStructure(
 						}
 
 						targetBox := targetElement.worldBox(targetOrigin, targetRotation)
+						targetOccupied := targetElement.occupiedBox(targetOrigin, targetRotation)
 						if candidate.jigsaw.MaxDistanceFromCenter > 0 && !boxWithinHorizontalRange(targetBox, centerX, centerZ, candidate.jigsaw.MaxDistanceFromCenter) {
 							continue
 						}
-						collides := false
-						for _, occupiedBox := range occupied {
-							if targetBox.intersects(occupiedBox) {
-								collides = true
-								break
+						if !targetOccupied.empty() {
+							collides := false
+							for _, occupiedBox := range occupied {
+								if targetOccupied.intersects(occupiedBox) {
+									collides = true
+									break
+								}
 							}
-						}
-						if collides {
-							continue
+							if collides {
+								continue
+							}
 						}
 
 						targetPiece := plannedStructurePiece{
-							element:  targetElement,
-							origin:   targetOrigin,
-							rotation: targetRotation,
-							bounds:   targetBox,
+							element:          targetElement,
+							origin:           targetOrigin,
+							rotation:         targetRotation,
+							bounds:           targetBox,
+							groundLevelDelta: structurePoolElementGroundLevelDelta(targetElement),
 						}
+						if targetRigid {
+							targetPiece.groundLevelDelta = state.piece.groundLevelDelta - deltaY
+						}
+						sharedGroundY := sourceSurfaceY + deltaY/2
+						if sourceRigid {
+							sharedGroundY = state.piece.bounds.minY + sourceJigsaw.localY
+						} else if targetRigid {
+							sharedGroundY = targetPiece.bounds.minY + targetJigsaw.localY
+						}
+						state.piece.junctions = append(state.piece.junctions, plannedStructureJunction{
+							sourceX:       targetPos[0],
+							sourceGroundY: sharedGroundY - sourceJigsaw.localY + state.piece.groundLevelDelta,
+							sourceZ:       targetPos[2],
+						})
+						targetPiece.junctions = append(targetPiece.junctions, plannedStructureJunction{
+							sourceX:       sourceJigsaw.pos[0],
+							sourceGroundY: sharedGroundY - targetJigsaw.localY + targetPiece.groundLevelDelta,
+							sourceZ:       sourceJigsaw.pos[2],
+						})
+						pieces[state.pieceIndex] = state.piece
 						pieces = append(pieces, targetPiece)
+						targetPieceIndex := len(pieces) - 1
+						if !targetOccupied.empty() {
+							occupied = append(occupied, targetOccupied)
+						}
 						if !targetBox.empty() {
-							occupied = append(occupied, targetBox)
 							overall = unionStructureBoxes(overall, targetBox)
 						}
 						if len(targetElement.jigsaws) != 0 && state.depth+1 <= candidate.jigsaw.Size {
 							queue = insertPendingPiece(queue, pendingStructurePiece{
-								piece:    targetPiece,
-								depth:    state.depth + 1,
-								priority: sourceJigsaw.placementPriority,
+								piece:      targetPiece,
+								pieceIndex: targetPieceIndex,
+								depth:      state.depth + 1,
+								priority:   sourceJigsaw.placementPriority,
 							})
 						}
 						continue sourceJigsawLoop
@@ -1138,4 +1203,8 @@ func (g Generator) buildPlannedStructure(
 
 	rootSize := rotatedStructureSize(rootElement.size, rootRotation)
 	return pieces, overall, rootOrigin, rootSize, true
+}
+
+func structurePoolElementGroundLevelDelta(resolvedPoolElement) int {
+	return 1
 }

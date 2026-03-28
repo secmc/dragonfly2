@@ -30,15 +30,16 @@ type structureStartKey struct {
 }
 
 type plannedStructureStart struct {
-	setName       string
-	structureName string
-	templateName  string
-	startChunk    world.ChunkPos
-	origin        cube.Pos
-	size          [3]int
-	rootOrigin    cube.Pos
-	rootSize      [3]int
-	pieces        []plannedStructurePiece
+	setName           string
+	structureName     string
+	templateName      string
+	terrainAdaptation string
+	startChunk        world.ChunkPos
+	origin            cube.Pos
+	size              [3]int
+	rootOrigin        cube.Pos
+	rootSize          [3]int
+	pieces            []plannedStructurePiece
 }
 
 type PlannedStructureInfo struct {
@@ -65,6 +66,7 @@ type structurePlannerCandidate struct {
 	structureName       string
 	structureType       string
 	biomeTag            string
+	terrainAdaptation   string
 	weight              int
 	generic             gen.GenericStructureDef
 	netherFossil        gen.NetherFossilStructureDef
@@ -82,6 +84,7 @@ type weightedStartTemplate struct {
 	name       string
 	weight     int
 	size       [3]int
+	occupies   bool
 	ignoreAir  bool
 	projection string
 	jigsaws    []structureJigsaw
@@ -161,6 +164,7 @@ func buildStructurePlanners(worldgen *gen.WorldgenRegistry, templates *gen.Struc
 					continue
 				}
 				candidate.biomeTag = normalizeStructureTag(jigsaw.Biomes)
+				candidate.terrainAdaptation = normalizeIdentifierName(jigsaw.TerrainAdaptation)
 				candidate.jigsaw = jigsaw
 				candidate.startTemplates = startTemplates
 				candidate.totalTemplateWeight = totalTemplateWeight
@@ -179,6 +183,7 @@ func buildStructurePlanners(worldgen *gen.WorldgenRegistry, templates *gen.Struc
 					continue
 				}
 				candidate.biomeTag = normalizeStructureTag(generic.Biomes)
+				candidate.terrainAdaptation = normalizeIdentifierName(generic.TerrainAdaptation)
 				candidate.generic = generic
 				candidate.maxBackreachX, candidate.maxBackreachZ = estimateDirectStructureBackreach(structureName, def.Type)
 			case "end_city":
@@ -187,6 +192,7 @@ func buildStructurePlanners(worldgen *gen.WorldgenRegistry, templates *gen.Struc
 					continue
 				}
 				candidate.biomeTag = normalizeStructureTag(generic.Biomes)
+				candidate.terrainAdaptation = normalizeIdentifierName(generic.TerrainAdaptation)
 				candidate.generic = generic
 				candidate.maxBackreachX, candidate.maxBackreachZ = estimateDirectStructureBackreach(structureName, def.Type)
 			case "nether_fossil":
@@ -195,6 +201,7 @@ func buildStructurePlanners(worldgen *gen.WorldgenRegistry, templates *gen.Struc
 					continue
 				}
 				candidate.biomeTag = normalizeStructureTag(netherFossil.Biomes)
+				candidate.terrainAdaptation = normalizeIdentifierName(netherFossil.TerrainAdaptation)
 				candidate.netherFossil = netherFossil
 				candidate.maxBackreachX, candidate.maxBackreachZ = estimateDirectStructureBackreach(structureName, def.Type)
 			case "shipwreck":
@@ -286,6 +293,7 @@ func buildStartTemplates(worldgen *gen.WorldgenRegistry, templates *gen.Structur
 			name:       single.Location,
 			weight:     entry.Weight,
 			size:       template.Size,
+			occupies:   templateHasPlaceableBlocks(template),
 			ignoreAir:  entry.Element.ElementType == "legacy_single_pool_element",
 			projection: normalizeIdentifierName(single.Projection),
 			jigsaws:    extractTemplateJigsaws(template),
@@ -380,6 +388,10 @@ func (g Generator) planStructureStart(planner structurePlanner, startChunk world
 		g.structureStarts.Store(cacheKey, plannedStructureStart{}, false)
 		return plannedStructureStart{}, false
 	}
+	if g.structurePlacementExcludedByOtherSet(planner, startChunk, minY, maxY, surfaceSampler) {
+		g.structureStarts.Store(cacheKey, plannedStructureStart{}, false)
+		return plannedStructureStart{}, false
+	}
 
 	startX := int(startChunk[0]) * 16
 	startZ := int(startChunk[1]) * 16
@@ -422,33 +434,61 @@ func (g Generator) planStructureStart(planner structurePlanner, startChunk world
 	}
 	overallOrigin, overallSize := overallBounds.originAndSize()
 	start := plannedStructureStart{
-		setName:       planner.setName,
-		structureName: candidate.structureName,
-		templateName:  templateName,
-		startChunk:    startChunk,
-		origin:        overallOrigin,
-		size:          overallSize,
-		rootOrigin:    rootOrigin,
-		rootSize:      rootSize,
-		pieces:        pieces,
+		setName:           planner.setName,
+		structureName:     candidate.structureName,
+		templateName:      templateName,
+		terrainAdaptation: candidate.terrainAdaptation,
+		startChunk:        startChunk,
+		origin:            overallOrigin,
+		size:              overallSize,
+		rootOrigin:        rootOrigin,
+		rootSize:          rootSize,
+		pieces:            pieces,
 	}
 	g.structureStarts.Store(cacheKey, start, true)
 	return start, true
 }
 
-func (g Generator) chooseStructureForPlanner(planner structurePlanner, biome gen.Biome, startChunk world.ChunkPos) (structurePlannerCandidate, bool) {
-	if len(planner.candidates) == 0 {
-		return structurePlannerCandidate{}, false
+func (g Generator) structurePlacementExcludedByOtherSet(planner structurePlanner, startChunk world.ChunkPos, minY, maxY int, surfaceSampler *structureHeightSampler) bool {
+	otherSet := normalizeStructureName(planner.placement.ExclusionZone.OtherSet)
+	chunkCount := planner.placement.ExclusionZone.ChunkCount
+	if otherSet == "" || chunkCount <= 0 || otherSet == planner.setName {
+		return false
 	}
 
-	if planner.setName == "villages" {
-		name, ok := villageStructureNameForBiome(biome)
-		if !ok {
-			return structurePlannerCandidate{}, false
+	otherPlanner, ok := g.findStructurePlanner(otherSet)
+	if !ok {
+		return false
+	}
+	if surfaceSampler == nil {
+		surfaceSampler = newStructureHeightSampler(g, minY, maxY)
+	}
+
+	minChunkX := int(startChunk[0]) - chunkCount
+	maxChunkX := int(startChunk[0]) + chunkCount
+	minChunkZ := int(startChunk[1]) - chunkCount
+	maxChunkZ := int(startChunk[1]) + chunkCount
+	minGridX := randomSpreadMinGrid(minChunkX, otherPlanner.placement.Spacing, otherPlanner.placement.Separation)
+	maxGridX := floorDiv(maxChunkX, otherPlanner.placement.Spacing)
+	minGridZ := randomSpreadMinGrid(minChunkZ, otherPlanner.placement.Spacing, otherPlanner.placement.Separation)
+	maxGridZ := floorDiv(maxChunkZ, otherPlanner.placement.Spacing)
+
+	for gridX := minGridX; gridX <= maxGridX; gridX++ {
+		for gridZ := minGridZ; gridZ <= maxGridZ; gridZ++ {
+			otherStartChunk := randomSpreadPotentialChunk(g.seed, otherPlanner.placement, gridX, gridZ)
+			if int(otherStartChunk[0]) < minChunkX || int(otherStartChunk[0]) > maxChunkX || int(otherStartChunk[1]) < minChunkZ || int(otherStartChunk[1]) > maxChunkZ {
+				continue
+			}
+			if _, exists := g.planStructureStart(otherPlanner, otherStartChunk, minY, maxY, surfaceSampler); exists {
+				return true
+			}
 		}
-		if index, ok := planner.candidateByName[name]; ok {
-			return planner.candidates[index], true
-		}
+	}
+	return false
+}
+
+func (g Generator) chooseStructureForPlanner(planner structurePlanner, biome gen.Biome, startChunk world.ChunkPos) (structurePlannerCandidate, bool) {
+	if len(planner.candidates) == 0 {
 		return structurePlannerCandidate{}, false
 	}
 
@@ -485,23 +525,6 @@ func (g Generator) chooseStructureForPlanner(planner structurePlanner, biome gen
 		pick -= candidate.weight
 	}
 	return structurePlannerCandidate{}, false
-}
-
-func villageStructureNameForBiome(biome gen.Biome) (string, bool) {
-	switch {
-	case biome == gen.BiomePlains || biome == gen.BiomeSunflowerPlains:
-		return "village_plains", true
-	case biome == gen.BiomeDesert:
-		return "village_desert", true
-	case biome == gen.BiomeSavanna || biome == gen.BiomeSavannaPlateau || biome == gen.BiomeWindsweptSavanna:
-		return "village_savanna", true
-	case biome == gen.BiomeSnowyPlains || biome == gen.BiomeIceSpikes || biome == gen.BiomeGrove || biome == gen.BiomeSnowySlopes || biome == gen.BiomeFrozenPeaks:
-		return "village_snowy", true
-	case biome == gen.BiomeTaiga || biome == gen.BiomeSnowyTaiga || biome == gen.BiomeOldGrowthPineTaiga || biome == gen.BiomeOldGrowthSpruceTaiga:
-		return "village_taiga", true
-	default:
-		return "", false
-	}
 }
 
 func chooseStartTemplate(candidate structurePlannerCandidate, rng *gen.Xoroshiro128) (weightedStartTemplate, bool) {

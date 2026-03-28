@@ -74,107 +74,175 @@ func structurePlacementLegacyType1(seed int64, sourceX, sourceZ int, probability
 }
 
 func (g Generator) structureCandidateAllowed(candidate structurePlannerCandidate, biome gen.Biome) bool {
-	switch candidate.structureType {
-	case "shipwreck":
-		if candidate.shipwreck.IsBeached {
-			return isBeachBiome(biome)
-		}
-		return isOceanBiome(biome)
-	case "ocean_ruin":
-		switch candidate.oceanRuin.BiomeTemp {
-		case "warm":
-			return biome == gen.BiomeWarmOcean || biome == gen.BiomeLukewarmOcean || biome == gen.BiomeDeepLukewarmOcean
-		default:
-			return biome == gen.BiomeFrozenOcean || biome == gen.BiomeColdOcean || biome == gen.BiomeOcean || biome == gen.BiomeDeepFrozenOcean || biome == gen.BiomeDeepColdOcean || biome == gen.BiomeDeepOcean
-		}
-	case "igloo":
-		return biome == gen.BiomeSnowyTaiga || biome == gen.BiomeSnowyPlains || biome == gen.BiomeSnowySlopes
-	case "buried_treasure":
-		return isBeachBiome(biome)
-	case "swamp_hut":
-		return biome == gen.BiomeSwamp
-	case "nether_fossil":
-		return biome == gen.BiomeSoulSandValley
-	case "end_city":
-		return biome == gen.BiomeEndHighlands || biome == gen.BiomeEndMidlands || biome == gen.BiomeEndBarrens
-	case "ruined_portal":
-		return ruinedPortalBiomeAllowed(candidate.structureName, biome)
-	default:
-		if candidate.structureType == "jigsaw" {
-			return true
-		}
-		return true
+	if candidate.biomeTag != "" {
+		return structureBiomeTagAllows(candidate.biomeTag, biome)
 	}
+	return true
 }
 
-func isBeachBiome(biome gen.Biome) bool {
-	return biome == gen.BiomeBeach || biome == gen.BiomeSnowyBeach
-}
-
-func ruinedPortalBiomeAllowed(structureName string, biome gen.Biome) bool {
-	switch structureName {
-	case "ruined_portal_desert":
-		return biome == gen.BiomeDesert
-	case "ruined_portal_jungle":
-		return isJungleBiome(biome)
-	case "ruined_portal_nether":
+func structureBiomeTagAllows(tag string, biome gen.Biome) bool {
+	switch tag {
+	case "has_structure/ancient_city":
+		return biome == gen.BiomeDeepDark
+	case "has_structure/bastion_remnant":
 		switch biome {
-		case gen.BiomeNetherWastes, gen.BiomeSoulSandValley, gen.BiomeCrimsonForest, gen.BiomeWarpedForest, gen.BiomeBasaltDeltas:
+		case gen.BiomeCrimsonForest, gen.BiomeNetherWastes, gen.BiomeSoulSandValley, gen.BiomeWarpedForest:
 			return true
 		default:
 			return false
 		}
-	case "ruined_portal_ocean":
-		return isOceanBiome(biome)
-	case "ruined_portal_swamp":
+	case "has_structure/buried_treasure":
+		return biomeMatchesWorldgenTag("is_beach", biome)
+	case "has_structure/desert_pyramid":
+		return biome == gen.BiomeDesert
+	case "has_structure/end_city":
+		return biome == gen.BiomeEndHighlands || biome == gen.BiomeEndMidlands
+	case "has_structure/igloo":
+		return biome == gen.BiomeSnowyTaiga || biome == gen.BiomeSnowyPlains || biome == gen.BiomeSnowySlopes
+	case "has_structure/jungle_temple":
+		return biome == gen.BiomeBambooJungle || biome == gen.BiomeJungle
+	case "has_structure/mineshaft":
+		return biomeMatchesWorldgenTag("is_ocean", biome) ||
+			isRiverBiome(biome) ||
+			biomeMatchesWorldgenTag("is_beach", biome) ||
+			biomeMatchesWorldgenTag("is_mountain", biome) ||
+			biomeMatchesWorldgenTag("is_hill", biome) ||
+			biomeMatchesWorldgenTag("is_taiga", biome) ||
+			biomeMatchesWorldgenTag("is_jungle", biome) ||
+			biomeMatchesWorldgenTag("is_forest", biome) ||
+			biome == gen.BiomeStonyShore ||
+			biome == gen.BiomeMushroomFields ||
+			biome == gen.BiomeIceSpikes ||
+			biome == gen.BiomeWindsweptSavanna ||
+			biome == gen.BiomeDesert ||
+			biome == gen.BiomeSavanna ||
+			biome == gen.BiomeSnowyPlains ||
+			biome == gen.BiomePlains ||
+			biome == gen.BiomeSunflowerPlains ||
+			biome == gen.BiomeSwamp ||
+			biome == gen.BiomeMangroveSwamp ||
+			biome == gen.BiomeSavannaPlateau ||
+			biome == gen.BiomeDripstoneCaves ||
+			biome == gen.BiomeLushCaves
+	case "has_structure/mineshaft_mesa":
+		return isBadlandsBiome(biome)
+	case "has_structure/nether_fortress":
+		return biomeMatchesWorldgenTag("is_nether", biome)
+	case "has_structure/nether_fossil":
+		return biome == gen.BiomeSoulSandValley
+	case "has_structure/ocean_monument":
+		return biomeMatchesWorldgenTag("is_deep_ocean", biome)
+	case "has_structure/ocean_ruin_cold":
+		switch biome {
+		case gen.BiomeFrozenOcean, gen.BiomeColdOcean, gen.BiomeOcean, gen.BiomeDeepFrozenOcean, gen.BiomeDeepColdOcean, gen.BiomeDeepOcean:
+			return true
+		default:
+			return false
+		}
+	case "has_structure/ocean_ruin_warm":
+		return biome == gen.BiomeLukewarmOcean || biome == gen.BiomeWarmOcean || biome == gen.BiomeDeepLukewarmOcean
+	case "has_structure/pillager_outpost":
+		return biome == gen.BiomeDesert ||
+			biome == gen.BiomePlains ||
+			biome == gen.BiomeSavanna ||
+			biome == gen.BiomeSnowyPlains ||
+			biome == gen.BiomeTaiga ||
+			biomeMatchesWorldgenTag("is_mountain", biome) ||
+			biome == gen.BiomeGrove
+	case "has_structure/ruined_portal_desert":
+		return biome == gen.BiomeDesert
+	case "has_structure/ruined_portal_jungle":
+		return biomeMatchesWorldgenTag("is_jungle", biome)
+	case "has_structure/ruined_portal_mountain":
+		return isBadlandsBiome(biome) ||
+			biomeMatchesWorldgenTag("is_hill", biome) ||
+			biome == gen.BiomeSavannaPlateau ||
+			biome == gen.BiomeWindsweptSavanna ||
+			biome == gen.BiomeStonyShore ||
+			biomeMatchesWorldgenTag("is_mountain", biome)
+	case "has_structure/ruined_portal_nether":
+		return biomeMatchesWorldgenTag("is_nether", biome)
+	case "has_structure/ruined_portal_ocean":
+		return biomeMatchesWorldgenTag("is_ocean", biome)
+	case "has_structure/ruined_portal_standard":
+		return biomeMatchesWorldgenTag("is_beach", biome) ||
+			isRiverBiome(biome) ||
+			biomeMatchesWorldgenTag("is_taiga", biome) ||
+			biomeMatchesWorldgenTag("is_forest", biome) ||
+			biome == gen.BiomeMushroomFields ||
+			biome == gen.BiomeIceSpikes ||
+			biome == gen.BiomeDripstoneCaves ||
+			biome == gen.BiomeLushCaves ||
+			biome == gen.BiomeSavanna ||
+			biome == gen.BiomeSnowyPlains ||
+			biome == gen.BiomePlains ||
+			biome == gen.BiomeSunflowerPlains
+	case "has_structure/ruined_portal_swamp":
 		return biome == gen.BiomeSwamp || biome == gen.BiomeMangroveSwamp
-	case "ruined_portal_mountain":
-		return isBadlandsBiome(biome) || isHillBiome(biome) || biome == gen.BiomeSavannaPlateau || biome == gen.BiomeWindsweptSavanna || biome == gen.BiomeStonyShore || isMountainBiome(biome)
+	case "has_structure/shipwreck":
+		return biomeMatchesWorldgenTag("is_ocean", biome)
+	case "has_structure/shipwreck_beached":
+		return biomeMatchesWorldgenTag("is_beach", biome)
+	case "has_structure/stronghold":
+		return biomeMatchesWorldgenTag("is_overworld", biome)
+	case "has_structure/swamp_hut":
+		return biome == gen.BiomeSwamp
+	case "has_structure/trail_ruins":
+		return biome == gen.BiomeTaiga ||
+			biome == gen.BiomeSnowyTaiga ||
+			biome == gen.BiomeOldGrowthPineTaiga ||
+			biome == gen.BiomeOldGrowthSpruceTaiga ||
+			biome == gen.BiomeTallBirchForest ||
+			biome == gen.BiomeJungle
+	case "has_structure/trial_chambers":
+		return biomeMatchesWorldgenTag("is_overworld", biome) && biome != gen.BiomeDeepDark
+	case "has_structure/village_desert":
+		return biome == gen.BiomeDesert
+	case "has_structure/village_plains":
+		return biome == gen.BiomePlains || biome == gen.BiomeMeadow
+	case "has_structure/village_savanna":
+		return biome == gen.BiomeSavanna
+	case "has_structure/village_snowy":
+		return biome == gen.BiomeSnowyPlains
+	case "has_structure/village_taiga":
+		return biome == gen.BiomeTaiga
+	case "has_structure/woodland_mansion":
+		return biome == gen.BiomeDarkForest || biome == gen.BiomePaleGarden
 	default:
-		return isBeachBiome(biome) || isRiverBiome(biome) || isTaigaBiome(biome) || isForestBiome(biome) || biome == gen.BiomeMushroomFields || biome == gen.BiomeIceSpikes || biome == gen.BiomeDripstoneCaves || biome == gen.BiomeLushCaves || biome == gen.BiomeSavanna || biome == gen.BiomeSnowyPlains || biome == gen.BiomePlains || biome == gen.BiomeSunflowerPlains
-	}
-}
-
-func isForestBiome(biome gen.Biome) bool {
-	switch biome {
-	case gen.BiomeForest, gen.BiomeFlowerForest, gen.BiomeBirchForest, gen.BiomeBirchForestHills, gen.BiomeDarkForest, gen.BiomeGrove:
 		return true
-	default:
-		return false
 	}
 }
 
-func isTaigaBiome(biome gen.Biome) bool {
+func biomeMatchesWorldgenTag(tag string, biome gen.Biome) bool {
 	switch biome {
+	case gen.BiomeDeepFrozenOcean:
+		return tag == "is_ocean" || tag == "is_deep_ocean" || tag == "is_overworld"
+	case gen.BiomeDeepColdOcean:
+		return tag == "is_ocean" || tag == "is_deep_ocean" || tag == "is_overworld"
+	case gen.BiomeDeepOcean:
+		return tag == "is_ocean" || tag == "is_deep_ocean" || tag == "is_overworld"
+	case gen.BiomeDeepLukewarmOcean:
+		return tag == "is_ocean" || tag == "is_deep_ocean" || tag == "is_overworld"
+	case gen.BiomeFrozenOcean, gen.BiomeOcean, gen.BiomeColdOcean, gen.BiomeLukewarmOcean, gen.BiomeWarmOcean:
+		return tag == "is_ocean" || tag == "is_overworld"
+	case gen.BiomeBeach, gen.BiomeSnowyBeach:
+		return tag == "is_beach" || tag == "is_overworld"
+	case gen.BiomeMeadow, gen.BiomeFrozenPeaks, gen.BiomeJaggedPeaks, gen.BiomeStonyPeaks, gen.BiomeSnowySlopes, gen.BiomeCherryGrove:
+		return tag == "is_mountain" || tag == "is_overworld"
+	case gen.BiomeWindsweptHills, gen.BiomeWindsweptForest, gen.BiomeGravellyMountains:
+		return tag == "is_hill" || tag == "is_overworld"
 	case gen.BiomeTaiga, gen.BiomeSnowyTaiga, gen.BiomeOldGrowthPineTaiga, gen.BiomeOldGrowthSpruceTaiga:
-		return true
-	default:
-		return false
-	}
-}
-
-func isJungleBiome(biome gen.Biome) bool {
-	switch biome {
-	case gen.BiomeJungle, gen.BiomeSparseJungle, gen.BiomeBambooJungle:
-		return true
-	default:
-		return false
-	}
-}
-
-func isHillBiome(biome gen.Biome) bool {
-	switch biome {
-	case gen.BiomeWindsweptHills, gen.BiomeWindsweptForest, gen.BiomeTaigaHills, gen.BiomeJungleHills:
-		return true
-	default:
-		return false
-	}
-}
-
-func isMountainBiome(biome gen.Biome) bool {
-	switch biome {
-	case gen.BiomeMeadow, gen.BiomeFrozenPeaks, gen.BiomeJaggedPeaks, gen.BiomeStonyPeaks, gen.BiomeSnowySlopes, gen.BiomeGrove:
-		return true
+		return tag == "is_taiga" || tag == "is_overworld"
+	case gen.BiomeBambooJungle, gen.BiomeJungle, gen.BiomeSparseJungle:
+		return tag == "is_jungle" || tag == "is_overworld"
+	case gen.BiomeForest, gen.BiomeFlowerForest, gen.BiomeBirchForest, gen.BiomeTallBirchForest, gen.BiomeDarkForest, gen.BiomePaleGarden, gen.BiomeGrove:
+		return tag == "is_forest" || tag == "is_overworld"
+	case gen.BiomeBadlands, gen.BiomeErodedBadlands, gen.BiomeWoodedBadlands:
+		return tag == "is_badlands" || tag == "is_overworld"
+	case gen.BiomeNetherWastes, gen.BiomeSoulSandValley, gen.BiomeCrimsonForest, gen.BiomeWarpedForest, gen.BiomeBasaltDeltas:
+		return tag == "is_nether"
+	case gen.BiomeMushroomFields, gen.BiomeStonyShore, gen.BiomeSwamp, gen.BiomeMangroveSwamp, gen.BiomeSnowyPlains, gen.BiomePlains, gen.BiomeSavannaPlateau, gen.BiomeSavanna, gen.BiomeDesert, gen.BiomeFrozenRiver, gen.BiomeRiver, gen.BiomeIceSpikes, gen.BiomeSunflowerPlains, gen.BiomeWindsweptSavanna, gen.BiomeDripstoneCaves, gen.BiomeLushCaves, gen.BiomeDeepDark:
+		return tag == "is_overworld"
 	default:
 		return false
 	}

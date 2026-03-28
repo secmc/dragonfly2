@@ -144,6 +144,12 @@ func (g Generator) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
 	maxY := c.Range().Max()
 	flat := g.graph.NewFlatCacheGrid(chunkX, chunkZ, g.noises)
 	finalDensityRoot := g.rootIndex("final_density")
+	densityScalar := g.finalDensityScalar
+	densityVector := g.finalDensityVector
+	if terrainSampler := newStructureTerrainSampler(g, chunkX, chunkZ, minY, maxY); terrainSampler != nil {
+		densityScalar = terrainSampler.scalarEvaluator(g, densityScalar)
+		densityVector = terrainSampler.vectorEvaluator(g, g.finalDensityScalar, densityVector)
+	}
 	densityChunk := gen.NewFinalDensityChunkWithEvaluator(
 		g.graph,
 		finalDensityRoot,
@@ -153,8 +159,8 @@ func (g Generator) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
 		maxY,
 		g.noises,
 		flat,
-		g.finalDensityScalar,
-		g.finalDensityVector,
+		densityScalar,
+		densityVector,
 	)
 	var aquifer *gen.NoiseBasedAquifer
 	if g.metadata.AquifersEnabled {

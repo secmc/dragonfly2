@@ -19,6 +19,10 @@ type RandomSpreadPlacement struct {
 	Frequency                float64 `json:"frequency"`
 	FrequencyReductionMethod string  `json:"frequency_reduction_method"`
 	LocateOffset             [3]int  `json:"locate_offset"`
+	ExclusionZone            struct {
+		ChunkCount int    `json:"chunk_count"`
+		OtherSet   string `json:"other_set"`
+	} `json:"exclusion_zone"`
 }
 
 func (d StructurePlacementDef) RandomSpread() (RandomSpreadPlacement, error) {
@@ -37,6 +41,7 @@ func (d StructurePlacementDef) RandomSpread() (RandomSpreadPlacement, error) {
 		out.Frequency = 1
 	}
 	out.FrequencyReductionMethod = normalizeIdentifier(out.FrequencyReductionMethod)
+	out.ExclusionZone.OtherSet = normalizeIdentifier(out.ExclusionZone.OtherSet)
 	return out, nil
 }
 
