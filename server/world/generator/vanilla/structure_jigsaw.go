@@ -31,7 +31,6 @@ type resolvedStructurePool struct {
 type resolvedPoolElement struct {
 	elementType string
 	projection  string
-	occupies    bool
 	placements  []structureTemplatePlacement
 	features    []structureFeaturePlacement
 	jigsaws     []structureJigsaw
@@ -134,6 +133,11 @@ type structureBox struct {
 	maxZ int
 }
 
+type structureCollisionSpace struct {
+	allowed structureBox
+	cutouts []structureBox
+}
+
 type listPoolElementDef struct {
 	Elements   []gen.TemplatePoolElementDef `json:"elements"`
 	Projection string                       `json:"projection"`
@@ -149,6 +153,7 @@ type pendingStructurePiece struct {
 	pieceIndex int
 	depth      int
 	priority   int
+	space      *structureCollisionSpace
 }
 
 func newStructureResolver(worldgen *gen.WorldgenRegistry, templates *gen.StructureTemplateRegistry) *structureResolver {
@@ -314,7 +319,6 @@ func (r *structureResolver) resolvePoolElement(def gen.TemplatePoolElementDef) (
 		return precomputeResolvedPoolElementJigsaws(resolvedPoolElement{
 			elementType: def.ElementType,
 			projection:  normalizeIdentifierName(single.Projection),
-			occupies:    templateHasPlaceableBlocks(template),
 			placements: []structureTemplatePlacement{{
 				templateName: single.Location,
 				ignoreAir:    def.ElementType == "legacy_single_pool_element",
@@ -339,7 +343,6 @@ func (r *structureResolver) resolvePoolElement(def gen.TemplatePoolElementDef) (
 			}
 			out.placements = append(out.placements, resolved.placements...)
 			out.features = append(out.features, resolved.features...)
-			out.occupies = out.occupies || resolved.occupies
 			out.size = maxStructureSize(out.size, resolved.size)
 			if i == 0 {
 				out.jigsaws = append(out.jigsaws, resolved.jigsaws...)
@@ -354,7 +357,6 @@ func (r *structureResolver) resolvePoolElement(def gen.TemplatePoolElementDef) (
 		return precomputeResolvedPoolElementJigsaws(resolvedPoolElement{
 			elementType: def.ElementType,
 			projection:  normalizeIdentifierName(raw.Projection),
-			occupies:    true,
 			features: []structureFeaturePlacement{{
 				featureName: normalizeIdentifierName(raw.Feature),
 			}},
@@ -414,21 +416,6 @@ func extractTemplateJigsaws(template gen.StructureTemplate) []structureJigsaw {
 		})
 	}
 	return jigsaws
-}
-
-func templateHasPlaceableBlocks(template gen.StructureTemplate) bool {
-	for _, block := range template.Blocks {
-		if block.State < 0 || block.State >= len(template.Palette) {
-			continue
-		}
-		switch template.Palette[block.State].Name {
-		case "minecraft:air", "minecraft:jigsaw", "minecraft:structure_void", "minecraft:structure_block":
-			continue
-		default:
-			return true
-		}
-	}
-	return false
 }
 
 func parseJigsawOrientation(properties map[string]any) (structureDirection, structureDirection) {
@@ -655,13 +642,6 @@ func (element resolvedPoolElement) worldBox(origin cube.Pos, rotation structureR
 	}
 }
 
-func (element resolvedPoolElement) occupiedBox(origin cube.Pos, rotation structureRotation) structureBox {
-	if !element.occupies {
-		return emptyStructureBox()
-	}
-	return element.worldBox(origin, rotation)
-}
-
 func emptyStructureBox() structureBox {
 	return structureBox{minX: 1, minY: 1, minZ: 1, maxX: 0, maxY: 0, maxZ: 0}
 }
@@ -688,6 +668,22 @@ func (b structureBox) intersects(other structureBox) bool {
 	return !(b.maxX < other.minX || b.minX > other.maxX || b.maxY < other.minY || b.minY > other.maxY || b.maxZ < other.minZ || b.minZ > other.maxZ)
 }
 
+func (b structureBox) containsPos(pos cube.Pos) bool {
+	if b.empty() {
+		return false
+	}
+	return pos[0] >= b.minX && pos[0] <= b.maxX &&
+		pos[1] >= b.minY && pos[1] <= b.maxY &&
+		pos[2] >= b.minZ && pos[2] <= b.maxZ
+}
+
+func (b structureBox) ySpan() int {
+	if b.empty() {
+		return 0
+	}
+	return b.maxY - b.minY + 1
+}
+
 func unionStructureBoxes(a, b structureBox) structureBox {
 	if a.empty() {
 		return b
@@ -710,6 +706,73 @@ func (b structureBox) originAndSize() (cube.Pos, [3]int) {
 		return cube.Pos{}, [3]int{}
 	}
 	return cube.Pos{b.minX, b.minY, b.minZ}, [3]int{b.maxX - b.minX + 1, b.maxY - b.minY + 1, b.maxZ - b.minZ + 1}
+}
+
+func newStructureCollisionSpace(allowed structureBox) *structureCollisionSpace {
+	return &structureCollisionSpace{allowed: allowed}
+}
+
+func (s *structureCollisionSpace) canFit(box structureBox) bool {
+	if box.empty() {
+		return true
+	}
+	if s == nil || s.allowed.empty() || !boxDeflatedWithin(box, s.allowed) {
+		return false
+	}
+	for _, cutout := range s.cutouts {
+		if boxDeflatedIntersects(box, cutout) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *structureCollisionSpace) occupy(box structureBox) {
+	if s == nil || box.empty() {
+		return
+	}
+	s.cutouts = append(s.cutouts, box)
+}
+
+func boxDeflatedWithin(box, allowed structureBox) bool {
+	if box.empty() {
+		return true
+	}
+	if allowed.empty() {
+		return false
+	}
+	minX, maxX := deflatedBoxQuarterBounds(box.minX, box.maxX)
+	minY, maxY := deflatedBoxQuarterBounds(box.minY, box.maxY)
+	minZ, maxZ := deflatedBoxQuarterBounds(box.minZ, box.maxZ)
+	return minX >= allowed.minX*4 &&
+		maxX <= (allowed.maxX+1)*4 &&
+		minY >= allowed.minY*4 &&
+		maxY <= (allowed.maxY+1)*4 &&
+		minZ >= allowed.minZ*4 &&
+		maxZ <= (allowed.maxZ+1)*4
+}
+
+func boxDeflatedIntersects(box, other structureBox) bool {
+	if box.empty() || other.empty() {
+		return false
+	}
+	boxMinX, boxMaxX := deflatedBoxQuarterBounds(box.minX, box.maxX)
+	boxMinY, boxMaxY := deflatedBoxQuarterBounds(box.minY, box.maxY)
+	boxMinZ, boxMaxZ := deflatedBoxQuarterBounds(box.minZ, box.maxZ)
+	otherMinX, otherMaxX := fullBoxQuarterBounds(other.minX, other.maxX)
+	otherMinY, otherMaxY := fullBoxQuarterBounds(other.minY, other.maxY)
+	otherMinZ, otherMaxZ := fullBoxQuarterBounds(other.minZ, other.maxZ)
+	return boxMinX < otherMaxX && boxMaxX > otherMinX &&
+		boxMinY < otherMaxY && boxMaxY > otherMinY &&
+		boxMinZ < otherMaxZ && boxMaxZ > otherMinZ
+}
+
+func deflatedBoxQuarterBounds(minValue, maxValue int) (int, int) {
+	return minValue*4 + 1, maxValue*4 + 3
+}
+
+func fullBoxQuarterBounds(minValue, maxValue int) (int, int) {
+	return minValue * 4, (maxValue + 1) * 4
 }
 
 func shuffleWithRNG[T any](values []T, rng *gen.Xoroshiro128) {
@@ -973,14 +1036,80 @@ func (m structurePoolAliasMapping) lookup(name string) string {
 	return key
 }
 
-func boxWithinHorizontalRange(box structureBox, centerX, centerZ, maxDistance int) bool {
-	if box.empty() {
+func structureCollisionRangeBox(centerX, centerY, centerZ, maxDistance, minY, maxY, padding int) structureBox {
+	if maxDistance <= 0 {
+		return emptyStructureBox()
+	}
+	return structureBox{
+		minX: centerX - maxDistance,
+		minY: max(centerY-maxDistance, minY+padding),
+		minZ: centerZ - maxDistance,
+		maxX: centerX + maxDistance,
+		maxY: min(centerY+maxDistance, maxY-padding),
+		maxZ: centerZ + maxDistance,
+	}
+}
+
+func structureFitsDimensionPadding(box structureBox, minY, maxY, padding int) bool {
+	if box.empty() || padding <= 0 {
 		return true
 	}
-	return box.minX >= centerX-maxDistance &&
-		box.maxX <= centerX+maxDistance &&
-		box.minZ >= centerZ-maxDistance &&
-		box.maxZ <= centerZ+maxDistance
+	return box.minY >= minY+padding && box.maxY <= maxY-padding
+}
+
+func expandStructureBoxForJigsawHack(box structureBox, expandTo int) structureBox {
+	if box.empty() || expandTo <= 0 {
+		return box
+	}
+	newSize := max(expandTo+1, box.maxY-box.minY)
+	if expandedMaxY := box.minY + newSize; expandedMaxY > box.maxY {
+		box.maxY = expandedMaxY
+	}
+	return box
+}
+
+func resolvedStructurePoolMaxYSpan(pool resolvedStructurePool) int {
+	maxSpan := 0
+	for _, entry := range pool.entries {
+		if entry.elementType == "empty_pool_element" {
+			continue
+		}
+		if entry.size[1] > maxSpan {
+			maxSpan = entry.size[1]
+		}
+	}
+	return maxSpan
+}
+
+func (g Generator) structureExpansionHackY(hackBox structureBox, jigsaws []placedStructureJigsaw, aliasLookup structurePoolAliasMapping) int {
+	if hackBox.empty() || hackBox.ySpan() > 16 || g.structureResolver == nil {
+		return 0
+	}
+	expandTo := 0
+	for _, jigsaw := range jigsaws {
+		frontPos := jigsaw.pos.Add(cube.Pos{jigsaw.front.stepX(), jigsaw.front.stepY(), jigsaw.front.stepZ()})
+		if !hackBox.containsPos(frontPos) {
+			continue
+		}
+		pool, err := g.structureResolver.Pool(aliasLookup.lookup(jigsaw.pool))
+		if err != nil {
+			continue
+		}
+		childPoolSize := resolvedStructurePoolMaxYSpan(pool)
+		childFallbackSize := 0
+		if pool.fallback != "" {
+			if fallback, err := g.structureResolver.Pool(aliasLookup.lookup(pool.fallback)); err == nil {
+				childFallbackSize = resolvedStructurePoolMaxYSpan(fallback)
+			}
+		}
+		if childPoolSize > expandTo {
+			expandTo = childPoolSize
+		}
+		if childFallbackSize > expandTo {
+			expandTo = childFallbackSize
+		}
+	}
+	return expandTo
 }
 
 func (g Generator) buildPlannedStructure(
@@ -993,7 +1122,6 @@ func (g Generator) buildPlannedStructure(
 	rootElement := precomputeResolvedPoolElementJigsaws(resolvedPoolElement{
 		elementType: "start",
 		projection:  start.projection,
-		occupies:    start.occupies,
 		placements: []structureTemplatePlacement{{
 			templateName: start.name,
 			ignoreAir:    start.ignoreAir,
@@ -1038,6 +1166,9 @@ func (g Generator) buildPlannedStructure(
 	}
 	rootOrigin[1] = baseY - 1
 	rootBox = rootElement.worldBox(rootOrigin, rootRotation)
+	if !structureFitsDimensionPadding(rootBox, surfaceSampler.minY, surfaceSampler.maxY, candidate.jigsaw.DimensionPadding) {
+		return nil, emptyStructureBox(), cube.Pos{}, [3]int{}, false
+	}
 
 	rootPiece := plannedStructurePiece{
 		element:          rootElement,
@@ -1049,17 +1180,26 @@ func (g Generator) buildPlannedStructure(
 	}
 
 	pieces := []plannedStructurePiece{rootPiece}
-	occupied := make([]structureBox, 0, candidate.jigsaw.Size+1)
-	if rootOccupied := rootElement.occupiedBox(rootOrigin, rootRotation); !rootOccupied.empty() {
-		occupied = append(occupied, rootOccupied)
-	}
 	overall := rootBox
 
 	if candidate.jigsaw.Size <= 0 {
 		return pieces, overall, rootOrigin, rotatedStructureSize(rootElement.size, rootRotation), true
 	}
 
-	queue := []pendingStructurePiece{{piece: rootPiece, pieceIndex: 0, depth: 0}}
+	contextSpace := newStructureCollisionSpace(structureCollisionRangeBox(
+		centerX,
+		baseY+anchor[1],
+		centerZ,
+		candidate.jigsaw.MaxDistanceFromCenter,
+		surfaceSampler.minY,
+		surfaceSampler.maxY,
+		candidate.jigsaw.DimensionPadding,
+	))
+	if contextSpace.allowed.empty() {
+		return nil, emptyStructureBox(), cube.Pos{}, [3]int{}, false
+	}
+	contextSpace.occupy(rootBox)
+	queue := []pendingStructurePiece{{piece: rootPiece, pieceIndex: 0, depth: 0, space: contextSpace}}
 	aliasLookup := resolveStructurePoolAliases(candidate.jigsaw.PoolAliases, cube.Pos{startX, baseY, startZ}, g.seed)
 	var (
 		candidates      []resolvedPoolElement
@@ -1077,6 +1217,7 @@ func (g Generator) buildPlannedStructure(
 		sourceRigid := normalizeIdentifierName(state.piece.element.projection) == "rigid"
 		sourceSurfaceY := 0
 		sourceSurfaceLoaded := false
+		var sourceSpace *structureCollisionSpace
 		sourceJigsaws = state.piece.element.appendShuffledJigsaws(sourceJigsaws[:0], state.piece.origin, state.piece.rotation, rng)
 
 	sourceJigsawLoop:
@@ -1105,6 +1246,10 @@ func (g Generator) buildPlannedStructure(
 				for _, targetRotation := range targetRotations {
 					targetJigsaws = targetElement.appendShuffledJigsaws(targetJigsaws[:0], cube.Pos{}, targetRotation, rng)
 					targetRigid := normalizeIdentifierName(targetElement.projection) == "rigid"
+					expandTo := 0
+					if candidate.jigsaw.UseExpansionHack {
+						expandTo = g.structureExpansionHackY(targetElement.worldBox(cube.Pos{}, targetRotation), targetJigsaws, aliasLookup)
+					}
 
 					for _, targetJigsaw := range targetJigsaws {
 						if !canAttachJigsaws(sourceJigsaw, targetJigsaw) {
@@ -1134,28 +1279,23 @@ func (g Generator) buildPlannedStructure(
 						}
 
 						targetBox := targetElement.worldBox(targetOrigin, targetRotation)
-						targetOccupied := targetElement.occupiedBox(targetOrigin, targetRotation)
-						if candidate.jigsaw.MaxDistanceFromCenter > 0 && !boxWithinHorizontalRange(targetBox, centerX, centerZ, candidate.jigsaw.MaxDistanceFromCenter) {
-							continue
+						targetCollisionBox := expandStructureBoxForJigsawHack(targetBox, expandTo)
+						childrenSpace := state.space
+						if state.piece.bounds.containsPos(targetPos) {
+							if sourceSpace == nil {
+								sourceSpace = newStructureCollisionSpace(state.piece.bounds)
+							}
+							childrenSpace = sourceSpace
 						}
-						if !targetOccupied.empty() {
-							collides := false
-							for _, occupiedBox := range occupied {
-								if targetOccupied.intersects(occupiedBox) {
-									collides = true
-									break
-								}
-							}
-							if collides {
-								continue
-							}
+						if !childrenSpace.canFit(targetCollisionBox) {
+							continue
 						}
 
 						targetPiece := plannedStructurePiece{
 							element:          targetElement,
 							origin:           targetOrigin,
 							rotation:         targetRotation,
-							bounds:           targetBox,
+							bounds:           targetCollisionBox,
 							groundLevelDelta: structurePoolElementGroundLevelDelta(targetElement),
 						}
 						if targetRigid {
@@ -1180,11 +1320,9 @@ func (g Generator) buildPlannedStructure(
 						pieces[state.pieceIndex] = state.piece
 						pieces = append(pieces, targetPiece)
 						targetPieceIndex := len(pieces) - 1
-						if !targetOccupied.empty() {
-							occupied = append(occupied, targetOccupied)
-						}
-						if !targetBox.empty() {
-							overall = unionStructureBoxes(overall, targetBox)
+						childrenSpace.occupy(targetCollisionBox)
+						if !targetPiece.bounds.empty() {
+							overall = unionStructureBoxes(overall, targetPiece.bounds)
 						}
 						if len(targetElement.jigsaws) != 0 && state.depth+1 <= candidate.jigsaw.Size {
 							queue = insertPendingPiece(queue, pendingStructurePiece{
@@ -1192,6 +1330,7 @@ func (g Generator) buildPlannedStructure(
 								pieceIndex: targetPieceIndex,
 								depth:      state.depth + 1,
 								priority:   sourceJigsaw.placementPriority,
+								space:      childrenSpace,
 							})
 						}
 						continue sourceJigsawLoop

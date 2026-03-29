@@ -29,6 +29,160 @@ func TestStructureTemplateDecode(t *testing.T) {
 	}
 }
 
+func TestParseStructureGenerationStep(t *testing.T) {
+	tests := []struct {
+		step string
+		want gen.GenerationStep
+		ok   bool
+	}{
+		{step: "surface_structures", want: gen.GenerationStepSurfaceStructures, ok: true},
+		{step: "underground_structures", want: gen.GenerationStepUndergroundStructures, ok: true},
+		{step: "underground_decoration", want: gen.GenerationStepUndergroundDecoration, ok: true},
+		{step: "minecraft:vegetal_decoration", want: gen.GenerationStepVegetalDecoration, ok: true},
+		{step: "not_a_real_step", ok: false},
+	}
+
+	for _, tt := range tests {
+		got, ok := parseStructureGenerationStep(tt.step)
+		if ok != tt.ok {
+			t.Fatalf("parseStructureGenerationStep(%q) ok=%v, want %v", tt.step, ok, tt.ok)
+		}
+		if ok && got != tt.want {
+			t.Fatalf("parseStructureGenerationStep(%q)=%v, want %v", tt.step, got, tt.want)
+		}
+	}
+}
+
+func TestStructurePlannerCandidateGenerationStep(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	tests := []struct {
+		setName       string
+		structureName string
+		want          gen.GenerationStep
+	}{
+		{setName: "villages", structureName: "village_plains", want: gen.GenerationStepSurfaceStructures},
+		{setName: "pillager_outposts", structureName: "pillager_outpost", want: gen.GenerationStepSurfaceStructures},
+		{setName: "ancient_cities", structureName: "ancient_city", want: gen.GenerationStepUndergroundDecoration},
+		{setName: "trial_chambers", structureName: "trial_chambers", want: gen.GenerationStepUndergroundStructures},
+	}
+
+	for _, tt := range tests {
+		planner, ok := g.findStructurePlanner(tt.setName)
+		if !ok {
+			t.Fatalf("load %s structure planner", tt.setName)
+		}
+		got, ok := planner.generationStepForStructure(tt.structureName)
+		if !ok {
+			t.Fatalf("missing generation step for %s/%s", tt.setName, tt.structureName)
+		}
+		if got != tt.want {
+			t.Fatalf("generation step for %s/%s = %v, want %v", tt.setName, tt.structureName, got, tt.want)
+		}
+	}
+}
+
+func TestBuildStructureStepOrderMatchesJavaBootstrapOrder(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+
+	surfaceEntries := g.structureStepOrder[gen.GenerationStepSurfaceStructures]
+	var surfaceNames []string
+	for _, entry := range surfaceEntries {
+		surfaceNames = append(surfaceNames, entry.structureName)
+	}
+	wantSurfacePrefix := []string{
+		"pillager_outpost",
+		"mansion",
+		"jungle_pyramid",
+		"desert_pyramid",
+		"igloo",
+		"shipwreck",
+		"shipwreck_beached",
+		"swamp_hut",
+		"stronghold",
+		"monument",
+		"ocean_ruin_cold",
+		"ocean_ruin_warm",
+	}
+	if len(surfaceNames) < len(wantSurfacePrefix) {
+		t.Fatalf("surface structure order has %d entries, want at least %d", len(surfaceNames), len(wantSurfacePrefix))
+	}
+	if !slices.Equal(surfaceNames[:len(wantSurfacePrefix)], wantSurfacePrefix) {
+		t.Fatalf("surface structure order prefix = %v, want %v", surfaceNames[:len(wantSurfacePrefix)], wantSurfacePrefix)
+	}
+
+	undergroundEntries := g.structureStepOrder[gen.GenerationStepUndergroundStructures]
+	var undergroundNames []string
+	for _, entry := range undergroundEntries {
+		undergroundNames = append(undergroundNames, entry.structureName)
+	}
+	wantUndergroundPrefix := []string{
+		"mineshaft",
+		"mineshaft_mesa",
+		"buried_treasure",
+		"trail_ruins",
+		"trial_chambers",
+	}
+	if len(undergroundNames) < len(wantUndergroundPrefix) {
+		t.Fatalf("underground structure order has %d entries, want at least %d", len(undergroundNames), len(wantUndergroundPrefix))
+	}
+	if !slices.Equal(undergroundNames[:len(wantUndergroundPrefix)], wantUndergroundPrefix) {
+		t.Fatalf("underground structure order prefix = %v, want %v", undergroundNames[:len(wantUndergroundPrefix)], wantUndergroundPrefix)
+	}
+}
+
+func TestStructureCollisionSpaceAllowsFaceTouchingBoxes(t *testing.T) {
+	space := newStructureCollisionSpace(structureBox{minX: 0, minY: 0, minZ: 0, maxX: 20, maxY: 20, maxZ: 20})
+	space.occupy(structureBox{minX: 0, minY: 0, minZ: 0, maxX: 4, maxY: 4, maxZ: 4})
+
+	if !space.canFit(structureBox{minX: 5, minY: 0, minZ: 0, maxX: 9, maxY: 4, maxZ: 4}) {
+		t.Fatal("expected jigsaw collision space to allow face-touching boxes")
+	}
+	if space.canFit(structureBox{minX: 4, minY: 0, minZ: 0, maxX: 8, maxY: 4, maxZ: 4}) {
+		t.Fatal("expected jigsaw collision space to reject overlapping boxes")
+	}
+	if space.canFit(structureBox{minX: -1, minY: 0, minZ: 0, maxX: 3, maxY: 4, maxZ: 4}) {
+		t.Fatal("expected jigsaw collision space to reject boxes outside the allowed bounds")
+	}
+}
+
+func TestStructureExpansionHackYUsesLargestChildPool(t *testing.T) {
+	g := Generator{
+		structureResolver: &structureResolver{
+			pools: map[string]resolvedStructurePool{
+				"test_pool": {
+					fallback: "test_fallback",
+					entries:  []resolvedPoolElement{{elementType: "single_pool_element", size: [3]int{1, 4, 1}}},
+				},
+				"test_fallback": {
+					entries: []resolvedPoolElement{{elementType: "single_pool_element", size: [3]int{1, 9, 1}}},
+				},
+			},
+		},
+	}
+
+	got := g.structureExpansionHackY(
+		structureBox{minX: 0, minY: 0, minZ: 0, maxX: 4, maxY: 7, maxZ: 4},
+		[]placedStructureJigsaw{{
+			pos:   cube.Pos{1, 0, 1},
+			front: structureNorth,
+			pool:  "test_pool",
+		}},
+		nil,
+	)
+	if got != 9 {
+		t.Fatalf("structure expansion hack span = %d, want 9", got)
+	}
+
+	expanded := expandStructureBoxForJigsawHack(structureBox{minX: 0, minY: 0, minZ: 0, maxX: 4, maxY: 7, maxZ: 4}, got)
+	if expanded.maxY != 10 {
+		t.Fatalf("expanded jigsaw collision box maxY = %d, want 10", expanded.maxY)
+	}
+}
+
 func TestPlanVillageStructureStart(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
@@ -232,7 +386,7 @@ func TestPlacePlannedStructureWritesBlocks(t *testing.T) {
 
 	c := chunk.New(0, cube.Range{-64, 319})
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
-	g.placePlannedStructure(c, biomes, start.chunkX, start.chunkZ, c.Range().Min(), c.Range().Max(), start.planned)
+	g.placePlannedStructure(c, biomes, start.chunkX, start.chunkZ, c.Range().Min(), c.Range().Max(), start.planned, nil)
 
 	nonAir := 0
 	for y := start.planned.origin[1]; y <= start.planned.origin[1]+start.planned.size[1]-1; y++ {
@@ -500,7 +654,7 @@ func TestPlacePlannedStructureExecutesFeaturePoolElements(t *testing.T) {
 	}
 
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
-	g.placePlannedStructure(c, biomes, 0, 0, c.Range().Min(), c.Range().Max(), start)
+	g.placePlannedStructure(c, biomes, 0, 0, c.Range().Min(), c.Range().Max(), start, nil)
 	if countTreeBlocks(c) == 0 {
 		t.Fatal("expected structure feature pool element to place tree blocks")
 	}
@@ -573,7 +727,7 @@ func TestBuriedTreasurePlacementWritesChest(t *testing.T) {
 	}
 	c := chunk.New(g.airRID, cube.Range{-64, 319})
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeBeach)
-	g.placePlannedStructure(c, biomes, 0, 0, c.Range().Min(), c.Range().Max(), start)
+	g.placePlannedStructure(c, biomes, 0, 0, c.Range().Min(), c.Range().Max(), start, nil)
 
 	chestRID, ok := g.lookupTemplateBlock(structureLookupName("chest"), structureLookupProperties("chest", map[string]string{"facing": "north"}))
 	if !ok {
@@ -1148,7 +1302,7 @@ func TestStrongholdPortalRoomContainsEndPortalFrames(t *testing.T) {
 	for _, pos := range candidates {
 		c := chunk.New(g.airRID, cube.Range{-64, 319})
 		biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
-		g.placePlannedStructure(c, biomes, int(pos[0]), int(pos[1]), c.Range().Min(), c.Range().Max(), start)
+		g.placePlannedStructure(c, biomes, int(pos[0]), int(pos[1]), c.Range().Min(), c.Range().Max(), start, nil)
 
 		for y := c.Range().Min(); y <= c.Range().Max(); y++ {
 			for x := 0; x < 16; x++ {
@@ -1306,7 +1460,7 @@ func TestOceanMonumentPreservesWaterInterior(t *testing.T) {
 
 	c := chunk.New(g.airRID, cube.Range{-64, 319})
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeDeepOcean)
-	g.placePlannedStructure(c, biomes, int(pos[0]), int(pos[1]), c.Range().Min(), c.Range().Max(), start)
+	g.placePlannedStructure(c, biomes, int(pos[0]), int(pos[1]), c.Range().Min(), c.Range().Max(), start, nil)
 
 	for y := c.Range().Min(); y <= c.Range().Max(); y++ {
 		for x := 0; x < 16; x++ {
@@ -1780,7 +1934,7 @@ func countPlacedStructureBlocksInChunk(t *testing.T, g Generator, start plannedS
 
 	c := chunk.New(g.airRID, r)
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), biome)
-	g.placePlannedStructure(c, biomes, int(pos[0]), int(pos[1]), c.Range().Min(), c.Range().Max(), start)
+	g.placePlannedStructure(c, biomes, int(pos[0]), int(pos[1]), c.Range().Min(), c.Range().Max(), start, nil)
 
 	found := 0
 	for y := c.Range().Min(); y <= c.Range().Max(); y++ {

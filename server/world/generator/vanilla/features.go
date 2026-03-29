@@ -2,7 +2,6 @@ package vanilla
 
 import (
 	"encoding/json"
-	"hash/fnv"
 	"math"
 	"slices"
 	"strconv"
@@ -16,39 +15,81 @@ import (
 )
 
 func (g Generator) decorateFeatures(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int) {
-	if g.features == nil {
+	if g.features == nil || g.biomeGeneration == nil {
 		return
 	}
 
-	surfaceBiomes := g.collectChunkBiomes(c, biomes, minY, maxY, true)
-	chunkBiomes := g.collectChunkBiomes(c, biomes, minY, maxY, false)
+	possibleBiomes := g.collectPossibleFeatureBiomes(chunkX, chunkZ, minY, maxY)
+	if len(possibleBiomes) == 0 {
+		return
+	}
 
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, surfaceBiomes, gen.GenerationStepLakes)
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, chunkBiomes, gen.GenerationStepRawGeneration)
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, chunkBiomes, gen.GenerationStepLocalModifications)
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, chunkBiomes, gen.GenerationStepUndergroundStructures)
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, surfaceBiomes, gen.GenerationStepSurfaceStructures)
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, chunkBiomes, gen.GenerationStepStrongholds)
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, chunkBiomes, gen.GenerationStepUndergroundOres)
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, chunkBiomes, gen.GenerationStepUndergroundDecoration)
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, chunkBiomes, gen.GenerationStepFluidSprings)
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, surfaceBiomes, gen.GenerationStepVegetalDecoration)
-	g.decorateStep(c, biomes, chunkX, chunkZ, minY, maxY, surfaceBiomes, gen.GenerationStepTopLayerModification)
+	decorationSeed := g.decorationSeed(chunkX, chunkZ)
+	treeFeatureCache := make(map[string]bool)
+	var treeRegion *treeDecorationRegion
+	for stepIndex := 0; stepIndex < featureStepCount; stepIndex++ {
+		step := gen.GenerationStep(stepIndex)
+		for _, featureIndex := range g.biomeGeneration.featureIndexesForStep(possibleBiomes, step) {
+			featureName := g.biomeGeneration.stepFeatures[stepIndex].features[featureIndex]
+			treeFeature, ok := treeFeatureCache[featureName]
+			if !ok {
+				treeFeature = g.placedFeatureMayPlaceTrees(featureName)
+				treeFeatureCache[featureName] = treeFeature
+			}
+			if treeFeature {
+				if treeRegion == nil {
+					treeRegion = newTreeDecorationRegion(g, c, biomes, chunkX, chunkZ, minY, maxY)
+				}
+				g.runPlacedTreeFeatureAcrossRegion(treeRegion, step, featureName, featureIndex)
+				continue
+			}
+			g.runPlacedFeature(c, biomes, chunkX, chunkZ, minY, maxY, step, featureName, featureIndex, decorationSeed)
+		}
+	}
 }
 
-func (g Generator) decorateStep(c *chunk.Chunk, sourceBiomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, biomes []gen.Biome, step gen.GenerationStep) {
-	if len(biomes) == 0 {
-		return
+func (g Generator) decorateFeaturesAndStructures(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int) {
+	var (
+		possibleBiomes []gen.Biome
+		decorationSeed int64
+		treeRegion     *treeDecorationRegion
+	)
+	if g.features != nil && g.biomeGeneration != nil {
+		possibleBiomes = g.collectPossibleFeatureBiomes(chunkX, chunkZ, minY, maxY)
+		if len(possibleBiomes) > 0 {
+			decorationSeed = g.decorationSeed(chunkX, chunkZ)
+		}
+	}
+	treeFeatureCache := make(map[string]bool)
+
+	var surfaceSampler *structureHeightSampler
+	if g.structureTemplates != nil && g.structureStarts != nil && len(g.structurePlanners) > 0 {
+		surfaceSampler = newStructureHeightSampler(g, minY, maxY)
 	}
 
-	for _, biome := range biomes {
-		features := g.biomeGeneration.featureSteps[biome][int(step)]
-		if len(features) == 0 {
+	for stepIndex := 0; stepIndex < featureStepCount; stepIndex++ {
+		step := gen.GenerationStep(stepIndex)
+		if surfaceSampler != nil {
+			g.placeStructuresForStep(c, biomes, chunkX, chunkZ, minY, maxY, step, surfaceSampler)
+		}
+		if len(possibleBiomes) == 0 {
 			continue
 		}
-		biomeKey := biomeKey(biome)
-		for _, featureName := range features {
-			g.runPlacedFeature(c, sourceBiomes, chunkX, chunkZ, minY, maxY, biomeKey, featureName)
+		for _, featureIndex := range g.biomeGeneration.featureIndexesForStep(possibleBiomes, step) {
+			featureName := g.biomeGeneration.stepFeatures[stepIndex].features[featureIndex]
+			treeFeature, ok := treeFeatureCache[featureName]
+			if !ok {
+				treeFeature = g.placedFeatureMayPlaceTrees(featureName)
+				treeFeatureCache[featureName] = treeFeature
+			}
+			if treeFeature {
+				if treeRegion == nil {
+					treeRegion = newTreeDecorationRegion(g, c, biomes, chunkX, chunkZ, minY, maxY)
+				}
+				g.runPlacedTreeFeatureAcrossRegion(treeRegion, step, featureName, featureIndex)
+				continue
+			}
+			g.runPlacedFeature(c, biomes, chunkX, chunkZ, minY, maxY, step, featureName, featureIndex, decorationSeed)
 		}
 	}
 }
@@ -87,25 +128,51 @@ func (g Generator) collectChunkBiomes(c *chunk.Chunk, biomes sourceBiomeVolume, 
 	return out
 }
 
-func (g Generator) runPlacedFeature(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, biomeKey, featureName string) {
+func (g Generator) collectPossibleFeatureBiomes(chunkX, chunkZ, minY, maxY int) []gen.Biome {
+	var seen [256]bool
+	startY := alignDown(minY, biomeCellSize)
+	for sampleChunkX := chunkX - 1; sampleChunkX <= chunkX+1; sampleChunkX++ {
+		for sampleChunkZ := chunkZ - 1; sampleChunkZ <= chunkZ+1; sampleChunkZ++ {
+			for localX := 0; localX < 16; localX += biomeCellSize {
+				worldX := sampleChunkX*16 + localX
+				for localZ := 0; localZ < 16; localZ += biomeCellSize {
+					worldZ := sampleChunkZ*16 + localZ
+					for y := startY; y <= maxY; y += biomeCellSize {
+						seen[g.biomeSource.GetBiome(worldX, y, worldZ)] = true
+					}
+				}
+			}
+		}
+	}
+
+	out := make([]gen.Biome, 0, 16)
+	for _, biome := range sortedBiomesByKey {
+		if seen[biome] {
+			out = append(out, biome)
+		}
+	}
+	return out
+}
+
+func (g Generator) runPlacedFeature(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, step gen.GenerationStep, featureName string, featureIndex int, decorationSeed int64) {
 	placed, err := g.features.Placed(featureName)
 	if err != nil {
 		return
 	}
 
 	origin := cube.Pos{chunkX * 16, minY, chunkZ * 16}
-	rng := g.featureRNG(chunkX, chunkZ, biomeKey, featureName)
-	positions, ok := g.applyPlacementModifiers(c, biomes, []cube.Pos{origin}, placed.Placement, biomeKey, chunkX, chunkZ, minY, maxY, &rng)
+	rng := g.featureRNG(decorationSeed, featureIndex, step)
+	positions, ok := g.applyPlacementModifiers(c, biomes, []cube.Pos{origin}, placed.Placement, featureName, chunkX, chunkZ, minY, maxY, &rng)
 	if !ok {
 		return
 	}
 
 	for _, pos := range positions {
-		g.executeConfiguredFeature(c, biomes, pos, placed.Feature, biomeKey, chunkX, chunkZ, minY, maxY, &rng, 0)
+		g.executeConfiguredFeature(c, biomes, pos, placed.Feature, featureName, chunkX, chunkZ, minY, maxY, &rng, 0)
 	}
 }
 
-func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVolume, pos cube.Pos, featureRef gen.ConfiguredFeatureRef, biomeKey string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int) bool {
+func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVolume, pos cube.Pos, featureRef gen.ConfiguredFeatureRef, topFeatureName string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int) bool {
 	if depth > 8 {
 		return false
 	}
@@ -121,13 +188,13 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 		if err != nil {
 			return false
 		}
-		return g.executeRandomPatch(c, biomes, pos, cfg, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1)
+		return g.executeRandomPatch(c, biomes, pos, cfg, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1)
 	case "flower":
 		cfg, err := feature.Flower()
 		if err != nil {
 			return false
 		}
-		return g.executeRandomPatch(c, biomes, pos, cfg, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1)
+		return g.executeRandomPatch(c, biomes, pos, cfg, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1)
 	case "simple_block":
 		cfg, err := feature.SimpleBlock()
 		if err != nil {
@@ -147,26 +214,26 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 		}
 		for _, entry := range cfg.Features {
 			if rng.NextDouble() < entry.Chance {
-				return g.executePlacedFeatureRef(c, biomes, pos, entry.Feature, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1)
+				return g.executePlacedFeatureRef(c, biomes, pos, entry.Feature, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1)
 			}
 		}
-		return g.executePlacedFeatureRef(c, biomes, pos, cfg.Default, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1)
+		return g.executePlacedFeatureRef(c, biomes, pos, cfg.Default, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1)
 	case "simple_random_selector":
 		cfg, err := feature.SimpleRandomSelector()
 		if err != nil || len(cfg.Features) == 0 {
 			return false
 		}
 		ref := cfg.Features[int(rng.NextInt(uint32(len(cfg.Features))))]
-		return g.executePlacedFeatureRef(c, biomes, pos, ref, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1)
+		return g.executePlacedFeatureRef(c, biomes, pos, ref, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1)
 	case "random_boolean_selector":
 		cfg, err := feature.RandomBooleanSelector()
 		if err != nil {
 			return false
 		}
 		if rng.NextDouble() < 0.5 {
-			return g.executePlacedFeatureRef(c, biomes, pos, cfg.FeatureTrue, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1)
+			return g.executePlacedFeatureRef(c, biomes, pos, cfg.FeatureTrue, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1)
 		}
-		return g.executePlacedFeatureRef(c, biomes, pos, cfg.FeatureFalse, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1)
+		return g.executePlacedFeatureRef(c, biomes, pos, cfg.FeatureFalse, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1)
 	case "seagrass":
 		cfg, err := feature.Seagrass()
 		if err != nil {
@@ -248,7 +315,7 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 		if err != nil {
 			return false
 		}
-		return g.executeFreezeTopLayer(c, biomes, biomeKey, cfg, chunkX, chunkZ, minY, maxY)
+		return g.executeFreezeTopLayer(c, biomes, cfg, chunkX, chunkZ, minY, maxY)
 	case "bamboo":
 		cfg, err := feature.Bamboo()
 		if err != nil {
@@ -260,19 +327,19 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 		if err != nil {
 			return false
 		}
-		return g.executeVegetationPatch(c, biomes, pos, cfg, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1, false)
+		return g.executeVegetationPatch(c, biomes, pos, cfg, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1, false)
 	case "waterlogged_vegetation_patch":
 		cfg, err := feature.WaterloggedVegetationPatch()
 		if err != nil {
 			return false
 		}
-		return g.executeVegetationPatch(c, biomes, pos, cfg, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1, true)
+		return g.executeVegetationPatch(c, biomes, pos, cfg, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1, true)
 	case "root_system":
 		cfg, err := feature.RootSystem()
 		if err != nil {
 			return false
 		}
-		return g.executeRootSystem(c, biomes, pos, cfg, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1)
+		return g.executeRootSystem(c, biomes, pos, cfg, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1)
 	case "fallen_tree":
 		cfg, err := feature.FallenTree()
 		if err != nil {
@@ -374,7 +441,7 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 	}
 }
 
-func (g Generator) executePlacedFeatureRef(c *chunk.Chunk, biomes sourceBiomeVolume, pos cube.Pos, placedRef gen.PlacedFeatureRef, biomeKey string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int) bool {
+func (g Generator) executePlacedFeatureRef(c *chunk.Chunk, biomes sourceBiomeVolume, pos cube.Pos, placedRef gen.PlacedFeatureRef, topFeatureName string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int) bool {
 	if depth > 8 {
 		return false
 	}
@@ -383,21 +450,24 @@ func (g Generator) executePlacedFeatureRef(c *chunk.Chunk, biomes sourceBiomeVol
 	if err != nil {
 		return false
 	}
-	positions, ok := g.applyPlacementModifiers(c, biomes, []cube.Pos{pos}, placed.Placement, biomeKey, chunkX, chunkZ, minY, maxY, rng)
+	if topFeatureName == "" {
+		topFeatureName = placedRef.Name
+	}
+	positions, ok := g.applyPlacementModifiers(c, biomes, []cube.Pos{pos}, placed.Placement, topFeatureName, chunkX, chunkZ, minY, maxY, rng)
 	if !ok {
 		return false
 	}
 
 	var placedAny bool
 	for _, candidate := range positions {
-		if g.executeConfiguredFeature(c, biomes, candidate, placed.Feature, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1) {
+		if g.executeConfiguredFeature(c, biomes, candidate, placed.Feature, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1) {
 			placedAny = true
 		}
 	}
 	return placedAny
 }
 
-func (g Generator) executeRandomPatch(c *chunk.Chunk, biomes sourceBiomeVolume, origin cube.Pos, cfg gen.RandomPatchConfig, biomeKey string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int) bool {
+func (g Generator) executeRandomPatch(c *chunk.Chunk, biomes sourceBiomeVolume, origin cube.Pos, cfg gen.RandomPatchConfig, topFeatureName string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int) bool {
 	var placedAny bool
 	for attempt := 0; attempt < cfg.Tries; attempt++ {
 		pos := origin.Add(cube.Pos{
@@ -408,7 +478,7 @@ func (g Generator) executeRandomPatch(c *chunk.Chunk, biomes sourceBiomeVolume, 
 		if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
 			continue
 		}
-		if g.executePlacedFeatureRef(c, biomes, pos, cfg.Feature, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1) {
+		if g.executePlacedFeatureRef(c, biomes, pos, cfg.Feature, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1) {
 			placedAny = true
 		}
 	}
@@ -955,11 +1025,7 @@ func (g Generator) lakeTouchesInterior(radiusX, radiusZ, depth, dx, dy, dz int) 
 	return false
 }
 
-func (g Generator) executeFreezeTopLayer(c *chunk.Chunk, biomes sourceBiomeVolume, biomeKey string, _ gen.FreezeTopLayerConfig, chunkX, chunkZ, minY, maxY int) bool {
-	if !isFreezingBiomeKey(biomeKey) {
-		return false
-	}
-
+func (g Generator) executeFreezeTopLayer(c *chunk.Chunk, biomes sourceBiomeVolume, _ gen.FreezeTopLayerConfig, chunkX, chunkZ, minY, maxY int) bool {
 	var placedAny bool
 	for localX := 0; localX < 16; localX++ {
 		for localZ := 0; localZ < 16; localZ++ {
@@ -967,7 +1033,7 @@ func (g Generator) executeFreezeTopLayer(c *chunk.Chunk, biomes sourceBiomeVolum
 			if surfaceY < minY || surfaceY > maxY {
 				continue
 			}
-			if g.sourceBiomeKeyAt(biomes, localX, surfaceY, localZ) != biomeKey {
+			if !isFreezingBiomeKey(g.sourceBiomeKeyAt(biomes, localX, surfaceY, localZ)) {
 				continue
 			}
 
@@ -1057,69 +1123,7 @@ func (g Generator) executeFallenTree(c *chunk.Chunk, pos cube.Pos, cfg gen.Falle
 }
 
 func (g Generator) executeTree(c *chunk.Chunk, pos cube.Pos, cfg gen.TreeConfig, minY, maxY int, rng *gen.Xoroshiro128) bool {
-	trunkState, ok := g.selectState(c, cfg.TrunkProvider, pos, rng, minY, maxY)
-	if !ok {
-		return false
-	}
-	trunkBlock, ok := g.featureBlockFromState(trunkState, nil)
-	if !ok {
-		return false
-	}
-	leafState, ok := g.selectState(c, cfg.FoliageProvider, pos, rng, minY, maxY)
-	if !ok {
-		return false
-	}
-
-	height, trunkType := sampleTreeHeight(cfg.TrunkPlacer, rng)
-	if height <= 0 {
-		return false
-	}
-	requestedHeight := height
-	sizeProfile := decodeTreeMinimumSize(cfg.MinimumSize)
-	height = g.maxFreeTreeHeight(c, pos, requestedHeight, sizeProfile, trunkBlock, minY, maxY)
-	if height <= 0 || (height < requestedHeight && (!sizeProfile.hasMinClippedSize || height < sizeProfile.minClippedHeight)) {
-		return false
-	}
-	if !g.prepareTreeSoil(c, pos, cfg, rng, minY, maxY) {
-		return false
-	}
-
-	foliageTop := cube.Pos{}
-	doubleTrunk := false
-	switch trunkType {
-	case "straight_trunk_placer", "fancy_trunk_placer", "bending_trunk_placer", "cherry_trunk_placer", "upwards_branching_trunk_placer":
-		top, ok := g.placeVerticalTrunk(c, pos, trunkState, height, minY, maxY)
-		if !ok {
-			return false
-		}
-		foliageTop = top.Side(cube.FaceUp)
-	case "forking_trunk_placer":
-		top, ok := g.placeForkingAcaciaTrunk(c, pos, trunkState, height, rng, minY, maxY)
-		if !ok {
-			return false
-		}
-		foliageTop = top.Side(cube.FaceUp)
-	case "dark_oak_trunk_placer", "giant_trunk_placer", "mega_jungle_trunk_placer":
-		top, ok := g.placeWideTrunk(c, pos, trunkState, height, minY, maxY)
-		if !ok {
-			return false
-		}
-		doubleTrunk = true
-		foliageTop = top
-		if trunkType != "dark_oak_trunk_placer" {
-			foliageTop = top.Side(cube.FaceUp)
-		}
-	default:
-		return false
-	}
-
-	if !g.placeTreeFoliage(c, foliageTop, leafState, cfg.FoliagePlacer, height, doubleTrunk, rng, minY, maxY) {
-		return false
-	}
-
-	trunkPositions, leafPositions := g.collectTreeStructure(c, pos, foliageTop, height)
-	g.applyTreeDecorators(c, pos, trunkPositions, leafPositions, cfg.Decorators, rng, minY, maxY)
-	return true
+	return g.executeJavaTree(c, pos, cfg, minY, maxY, rng)
 }
 
 func (g Generator) executeBamboo(c *chunk.Chunk, pos cube.Pos, cfg gen.BambooConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
@@ -1166,7 +1170,7 @@ func (g Generator) executeBamboo(c *chunk.Chunk, pos cube.Pos, cfg gen.BambooCon
 	return true
 }
 
-func (g Generator) executeVegetationPatch(c *chunk.Chunk, biomes sourceBiomeVolume, pos cube.Pos, cfg gen.VegetationPatchConfig, biomeKey string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int, waterlogged bool) bool {
+func (g Generator) executeVegetationPatch(c *chunk.Chunk, biomes sourceBiomeVolume, pos cube.Pos, cfg gen.VegetationPatchConfig, topFeatureName string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int, waterlogged bool) bool {
 	radius := max(1, g.sampleIntProvider(cfg.XZRadius, rng))
 	patchDepth := max(1, g.sampleIntProvider(cfg.Depth, rng))
 	var placedAny bool
@@ -1211,7 +1215,7 @@ func (g Generator) executeVegetationPatch(c *chunk.Chunk, biomes sourceBiomeVolu
 			if waterlogged && c.Block(uint8(plantPos[0]&15), int16(plantPos[1]), uint8(plantPos[2]&15), 0) == g.airRID {
 				c.SetBlock(uint8(plantPos[0]&15), int16(plantPos[1]), uint8(plantPos[2]&15), 0, g.waterRID)
 			}
-			if g.executePlacedFeatureRef(c, biomes, plantPos, cfg.VegetationFeature, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1) {
+			if g.executePlacedFeatureRef(c, biomes, plantPos, cfg.VegetationFeature, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1) {
 				placedAny = true
 			}
 		}
@@ -1219,7 +1223,7 @@ func (g Generator) executeVegetationPatch(c *chunk.Chunk, biomes sourceBiomeVolu
 	return placedAny
 }
 
-func (g Generator) executeRootSystem(c *chunk.Chunk, biomes sourceBiomeVolume, pos cube.Pos, cfg gen.RootSystemConfig, biomeKey string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int) bool {
+func (g Generator) executeRootSystem(c *chunk.Chunk, biomes sourceBiomeVolume, pos cube.Pos, cfg gen.RootSystemConfig, topFeatureName string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int) bool {
 	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) || !g.testBlockPredicate(c, pos, cfg.AllowedTreePosition, chunkX, chunkZ, minY, maxY, rng) {
 		return false
 	}
@@ -1242,7 +1246,7 @@ func (g Generator) executeRootSystem(c *chunk.Chunk, biomes sourceBiomeVolume, p
 	if waterBlocks > cfg.AllowedVerticalWaterForTree {
 		return false
 	}
-	if !g.executePlacedFeatureRef(c, biomes, pos, cfg.Feature, biomeKey, chunkX, chunkZ, minY, maxY, rng, depth+1) {
+	if !g.executePlacedFeatureRef(c, biomes, pos, cfg.Feature, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1) {
 		return false
 	}
 
@@ -2062,7 +2066,7 @@ func (g Generator) alterGroundAroundTree(c *chunk.Chunk, origin cube.Pos, provid
 	}
 }
 
-func (g Generator) applyPlacementModifiers(c *chunk.Chunk, biomes sourceBiomeVolume, positions []cube.Pos, modifiers []gen.PlacementModifier, biomeKey string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) ([]cube.Pos, bool) {
+func (g Generator) applyPlacementModifiers(c *chunk.Chunk, biomes sourceBiomeVolume, positions []cube.Pos, modifiers []gen.PlacementModifier, topFeatureName string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) ([]cube.Pos, bool) {
 	out := slices.Clone(positions)
 
 	for _, modifier := range modifiers {
@@ -2192,7 +2196,7 @@ func (g Generator) applyPlacementModifiers(c *chunk.Chunk, biomes sourceBiomeVol
 				if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
 					continue
 				}
-				if g.sourceBiomeKeyAt(biomes, localX, pos[1], localZ) == biomeKey {
+				if g.biomeGeneration.biomeHasFeature(biomes.biomeAt(localX, pos[1], localZ), topFeatureName) {
 					next = append(next, pos)
 				}
 			}
@@ -2307,6 +2311,7 @@ func (g Generator) placeStateProviderBlock(c *chunk.Chunk, pos cube.Pos, provide
 }
 
 func (g Generator) selectState(c *chunk.Chunk, provider gen.StateProvider, pos cube.Pos, rng *gen.Xoroshiro128, minY, maxY int) (gen.BlockState, bool) {
+	c = g.chunkForActiveTreePos(c, pos)
 	switch provider.Type {
 	case "simple_state_provider":
 		cfg, err := provider.SimpleState()
@@ -2526,6 +2531,9 @@ func normalizeFeatureState(state gen.BlockState) gen.BlockState {
 	if state.Name == "hanging_roots" {
 		delete(props, "waterlogged")
 	}
+	if state.Name == "podzol" {
+		delete(props, "snowy")
+	}
 
 	if len(props) == 0 {
 		state.Properties = nil
@@ -2563,6 +2571,9 @@ func featureStateNeedsPropertyNormalization(name string, properties map[string]s
 	case name == "hanging_roots":
 		_, ok := properties["waterlogged"]
 		return ok
+	case name == "podzol":
+		_, ok := properties["snowy"]
+		return ok
 	default:
 		return false
 	}
@@ -2593,9 +2604,24 @@ func dragonflyFallbackFeatureState(state gen.BlockState) (gen.BlockState, bool) 
 	case "rooted_dirt":
 		// TODO: Place real rooted dirt when Dragonfly exposes minecraft:rooted_dirt.
 		return gen.BlockState{Name: "dirt"}, true
+	case "mangrove_roots":
+		// TODO: Place real mangrove roots when Dragonfly exposes minecraft:mangrove_roots.
+		return gen.BlockState{Name: "muddy_mangrove_roots", Properties: map[string]string{"axis": "y"}}, true
 	case "leaf_litter":
 		// TODO: Place real leaf litter when Dragonfly exposes minecraft:leaf_litter.
 		return gen.BlockState{Name: "short_grass"}, true
+	case "pale_moss_block":
+		// TODO: Place real pale moss blocks when Dragonfly exposes minecraft:pale_moss_block.
+		return gen.BlockState{Name: "moss_block"}, true
+	case "pale_moss_carpet":
+		// TODO: Place real pale moss carpets when Dragonfly exposes minecraft:pale_moss_carpet.
+		return gen.BlockState{Name: "moss_carpet"}, true
+	case "pale_hanging_moss":
+		// TODO: Place real pale hanging moss when Dragonfly exposes minecraft:pale_hanging_moss.
+		return gen.BlockState{Name: "moss_carpet"}, true
+	case "creaking_heart":
+		// TODO: Place real creaking hearts when Dragonfly exposes minecraft:creaking_heart.
+		return gen.BlockState{Name: "pale_oak_log", Properties: map[string]string{"axis": "y"}}, true
 	case "mangrove_propagule":
 		// TODO: Place real mangrove propagules when Dragonfly exposes minecraft:mangrove_propagule.
 		return gen.BlockState{Name: "oak_sapling"}, true
@@ -2885,6 +2911,7 @@ func (g Generator) testBlockPredicate(c *chunk.Chunk, pos cube.Pos, predicate ge
 }
 
 func (g Generator) blockNameAt(c *chunk.Chunk, pos cube.Pos) string {
+	c = g.chunkForActiveTreePos(c, pos)
 	rid := c.Block(uint8(pos[0]&15), int16(pos[1]), uint8(pos[2]&15), 0)
 	if name, ok := g.blockNameCache.Lookup(rid); ok {
 		return name
@@ -2982,7 +3009,11 @@ func (g Generator) matchesFeatureBlockTag(blockName, tag string) bool {
 	tag = normalizeFeatureTag(tag)
 	switch tag {
 	case "replaceable_by_trees":
-		return blockName == "air" || blockName == "short_grass" || blockName == "tall_grass" || blockName == "fern" || blockName == "large_fern" || strings.HasSuffix(blockName, "_mushroom") || strings.Contains(blockName, "flower") || blockName == "waterlily" || blockName == "snow"
+		switch blockName {
+		case "air", "pale_moss_carpet", "short_grass", "fern", "dead_bush", "vine", "glow_lichen", "sunflower", "lilac", "rose_bush", "peony", "tall_grass", "large_fern", "hanging_roots", "pitcher_plant", "water", "seagrass", "tall_seagrass", "bush", "firefly_bush", "warped_roots", "nether_sprouts", "crimson_roots", "leaf_litter", "short_dry_grass", "tall_dry_grass", "waterlily", "snow":
+			return true
+		}
+		return strings.HasSuffix(blockName, "_leaves") || strings.HasSuffix(blockName, "_mushroom") || strings.Contains(blockName, "flower")
 	case "azalea_grows_on":
 		return slices.Contains([]string{"dirt", "grass", "clay", "moss_block", "podzol"}, blockName)
 	case "moss_replaceable":
@@ -2991,6 +3022,8 @@ func (g Generator) matchesFeatureBlockTag(blockName, tag string) bool {
 		return slices.Contains([]string{"stone", "granite", "diorite", "andesite", "tuff", "deepslate", "calcite", "dripstone_block", "clay", "dirt", "grass", "podzol", "moss_block"}, blockName)
 	case "azalea_root_replaceable":
 		return slices.Contains([]string{"stone", "granite", "diorite", "andesite", "tuff", "deepslate", "calcite", "dripstone_block", "clay", "dirt", "grass", "podzol", "moss_block"}, blockName)
+	case "cannot_replace_below_tree_trunk":
+		return slices.Contains([]string{"dirt", "coarse_dirt", "rooted_dirt", "mud", "muddy_mangrove_roots", "moss_block", "pale_moss_block", "podzol"}, blockName)
 	case "mangrove_roots_can_grow_through":
 		return blockName == "air" || blockName == "water" || blockName == "mud" || blockName == "short_grass" || blockName == "tall_grass" || strings.HasSuffix(blockName, "_leaves")
 	case "mangrove_logs_can_grow_through":
@@ -3217,6 +3250,7 @@ func (g Generator) setBlockStateDirect(c *chunk.Chunk, pos cube.Pos, state gen.B
 }
 
 func (g Generator) setFeatureBlock(c *chunk.Chunk, pos cube.Pos, featureBlock world.Block) bool {
+	c = g.chunkForActiveTreePos(c, pos)
 	localX := uint8(pos[0] & 15)
 	localZ := uint8(pos[2] & 15)
 	y := int16(pos[1])
@@ -3233,6 +3267,7 @@ func (g Generator) setFeatureBlock(c *chunk.Chunk, pos cube.Pos, featureBlock wo
 }
 
 func (g Generator) displacedLiquidRuntimeID(c *chunk.Chunk, pos cube.Pos, featureBlock world.Block) (uint32, bool) {
+	c = g.chunkForActiveTreePos(c, pos)
 	displacer, ok := featureBlock.(world.LiquidDisplacer)
 	if !ok {
 		return 0, false
@@ -4103,11 +4138,16 @@ func (g Generator) positionInChunk(pos cube.Pos, chunkX, chunkZ, minY, maxY int)
 		pos[1] >= minY && pos[1] <= maxY
 }
 
-func (g Generator) featureRNG(chunkX, chunkZ int, biomeKey, featureName string) gen.Xoroshiro128 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(biomeKey))
-	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(featureName))
-	seed := int64(h.Sum64()) ^ g.seed ^ int64(chunkX)*341873128712 ^ int64(chunkZ)*132897987541
+func (g Generator) decorationSeed(chunkX, chunkZ int) int64 {
+	rng := gen.NewXoroshiro128FromSeed(g.seed)
+	xScale := int64(rng.NextLong()) | 1
+	zScale := int64(rng.NextLong()) | 1
+	chunkMinX := int64(chunkX * 16)
+	chunkMinZ := int64(chunkZ * 16)
+	return chunkMinX*xScale + chunkMinZ*zScale ^ g.seed
+}
+
+func (g Generator) featureRNG(decorationSeed int64, featureIndex int, step gen.GenerationStep) gen.Xoroshiro128 {
+	seed := decorationSeed + int64(featureIndex) + int64(step)*10000
 	return gen.NewXoroshiro128FromSeed(seed)
 }
