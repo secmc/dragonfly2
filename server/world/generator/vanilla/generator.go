@@ -27,6 +27,8 @@ type Generator struct {
 	dimension          world.Dimension
 	dimensionName      string
 	seed               int64
+	activeTreeRegion   *treeDecorationRegion
+	structureStepOrder [][]structureStepEntry
 	graph              *gen.Graph
 	graphRoots         map[string]int
 	noises             *gen.NoiseRegistry
@@ -78,6 +80,7 @@ func NewForDimension(seed int64, dim world.Dimension) Generator {
 		panic(err)
 	}
 	structurePlanners := sharedStructurePlanners(worldgen, structureTemplates, dim)
+	structureStepOrder := buildStructureStepOrder(structurePlanners)
 	carvers := gen.NewCarverRegistry()
 	features := gen.NewFeatureRegistry()
 	biomeGeneration := newBiomeGenerationIndex(features, carvers)
@@ -89,6 +92,7 @@ func NewForDimension(seed int64, dim world.Dimension) Generator {
 		dimension:          dim,
 		dimensionName:      dimensionName,
 		seed:               seed,
+		structureStepOrder: structureStepOrder,
 		graph:              graph,
 		graphRoots:         roots,
 		noises:             noises,
@@ -145,6 +149,15 @@ func sharedStructurePlanners(worldgen *gen.WorldgenRegistry, templates *gen.Stru
 }
 
 func (g Generator) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
+	chunkX := int(pos[0])
+	chunkZ := int(pos[1])
+	minY := c.Range().Min()
+	maxY := c.Range().Max()
+	biomes, _, _, _, _ := g.prepareChunkForDecoration(pos, c)
+	g.decorateFeaturesAndStructures(c, biomes, chunkX, chunkZ, minY, maxY)
+}
+
+func (g Generator) prepareChunkForDecoration(pos world.ChunkPos, c *chunk.Chunk) (sourceBiomeVolume, int, int, int, int) {
 	chunkX := int(pos[0])
 	chunkZ := int(pos[1])
 	minY := c.Range().Min()
@@ -227,9 +240,8 @@ func (g Generator) GenerateChunk(pos world.ChunkPos, c *chunk.Chunk) {
 	biomes := g.populateBiomeVolume(c, chunkX, chunkZ, minY, maxY)
 	g.carveTerrain(c, biomes, chunkX, chunkZ, minY, maxY, aquifer)
 	g.applySurfaceAndBiomes(c, biomes, chunkX, chunkZ, minY, maxY)
-	g.decorateFeatures(c, biomes, chunkX, chunkZ, minY, maxY)
 	g.decorateEndMainIsland(c, chunkX, chunkZ, minY, maxY)
-	g.placeStructures(c, biomes, chunkX, chunkZ, minY, maxY)
+	return biomes, chunkX, chunkZ, minY, maxY
 }
 
 // ConcurrentChunkGeneration returns true because Generator guards its shared
@@ -422,8 +434,11 @@ func (c *doublePerlinNoiseCache) Store(key string, noise gen.DoublePerlinNoise) 
 }
 
 type biomeGenerationIndex struct {
-	featureSteps [256][featureStepCount][]string
-	carverNames  [256][]string
+	featureSteps      [256][featureStepCount][]string
+	featureIndexes    [256][featureStepCount][]int
+	featureMembership [256]map[string]struct{}
+	stepFeatures      [featureStepCount]stepFeatureData
+	carverNames       [256][]string
 }
 
 func newBiomeGenerationIndex(features *gen.FeatureRegistry, carvers *gen.CarverRegistry) *biomeGenerationIndex {
@@ -438,6 +453,23 @@ func newBiomeGenerationIndex(features *gen.FeatureRegistry, carvers *gen.CarverR
 			idx.featureSteps[biomeID][step] = features.BiomePlacedFeatures(key, gen.GenerationStep(step))
 		}
 		idx.carverNames[biomeID] = carvers.BiomeCarvers(key)
+	}
+	idx.stepFeatures = buildStepFeatureData(idx.featureSteps)
+	for _, biome := range sortedBiomesByKey {
+		biomeID := int(biome)
+		membership := make(map[string]struct{})
+		for step := 0; step < featureStepCount; step++ {
+			names := idx.featureSteps[biomeID][step]
+			indexes := make([]int, 0, len(names))
+			for _, name := range names {
+				membership[name] = struct{}{}
+				if index, ok := idx.stepFeatures[step].index(name); ok {
+					indexes = append(indexes, index)
+				}
+			}
+			idx.featureIndexes[biomeID][step] = indexes
+		}
+		idx.featureMembership[biomeID] = membership
 	}
 	return idx
 }

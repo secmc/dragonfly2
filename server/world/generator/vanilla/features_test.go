@@ -137,7 +137,7 @@ func TestFeatureBlockFromStateNormalizesTreeStates(t *testing.T) {
 	}
 }
 
-func TestFeatureBlockFromStateFallsBackForUnsupportedJavaBlocks(t *testing.T) {
+func TestFeatureBlockFromStateResolvesImplementedFeatureBlocks(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
 	g := New(0)
@@ -149,12 +149,12 @@ func TestFeatureBlockFromStateFallsBackForUnsupportedJavaBlocks(t *testing.T) {
 		{
 			name:       "bamboo",
 			state:      gen.BlockState{Name: "minecraft:bamboo"},
-			expectType: block.SugarCane{},
+			expectType: block.Bamboo{},
 		},
 		{
 			name:       "rooted_dirt",
 			state:      gen.BlockState{Name: "minecraft:rooted_dirt"},
-			expectType: block.Dirt{},
+			expectType: block.RootedDirt{},
 		},
 		{
 			name: "leaf_litter",
@@ -165,7 +165,12 @@ func TestFeatureBlockFromStateFallsBackForUnsupportedJavaBlocks(t *testing.T) {
 					"segment_amount": "4",
 				},
 			},
-			expectType: block.ShortGrass{},
+			expectType: block.LeafLitter{},
+		},
+		{
+			name:       "pale_moss_block",
+			state:      gen.BlockState{Name: "minecraft:pale_moss_block"},
+			expectType: block.PaleMossBlock{},
 		},
 		{
 			name: "big_dripleaf",
@@ -177,7 +182,32 @@ func TestFeatureBlockFromStateFallsBackForUnsupportedJavaBlocks(t *testing.T) {
 					"waterlogged": "false",
 				},
 			},
-			expectType: block.SugarCane{},
+			expectType: block.BigDripleaf{},
+		},
+		{
+			name: "small_dripleaf",
+			state: gen.BlockState{
+				Name: "minecraft:small_dripleaf",
+				Properties: map[string]string{
+					"facing":      "east",
+					"half":        "lower",
+					"waterlogged": "false",
+				},
+			},
+			expectType: block.SmallDripleaf{},
+		},
+		{
+			name: "mangrove_propagule",
+			state: gen.BlockState{
+				Name: "minecraft:mangrove_propagule",
+				Properties: map[string]string{
+					"age":         "4",
+					"hanging":     "true",
+					"stage":       "0",
+					"waterlogged": "false",
+				},
+			},
+			expectType: block.MangrovePropagule{},
 		},
 	}
 
@@ -194,24 +224,159 @@ func TestFeatureBlockFromStateFallsBackForUnsupportedJavaBlocks(t *testing.T) {
 	}
 }
 
-func TestMangrovePropaguleSurvivesOnMud(t *testing.T) {
+func TestFeatureBlockNameNormalizesImplementedBedrockStateNames(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	c.SetBlock(1, 1, 1, 0, world.BlockRuntimeID(block.RootedDirt{}))
+	c.SetBlock(2, 1, 2, 0, world.BlockRuntimeID(block.SmallDripleaf{Facing: cube.East}))
+	c.SetBlock(3, 1, 3, 0, world.BlockRuntimeID(block.BigDripleaf{Facing: cube.South}))
+	c.SetBlock(4, 1, 4, 0, world.BlockRuntimeID(block.BigDripleaf{Facing: cube.South, Head: true}))
+
+	if got := g.blockNameAt(c, cube.Pos{1, 1, 1}); got != "rooted_dirt" {
+		t.Fatalf("expected rooted dirt block name, got %q", got)
+	}
+	if got := g.blockNameAt(c, cube.Pos{2, 1, 2}); got != "small_dripleaf" {
+		t.Fatalf("expected small dripleaf block name, got %q", got)
+	}
+	if got := g.blockNameAt(c, cube.Pos{3, 1, 3}); got != "big_dripleaf_stem" {
+		t.Fatalf("expected big dripleaf stem name, got %q", got)
+	}
+	if got := g.blockNameAt(c, cube.Pos{4, 1, 4}); got != "big_dripleaf" {
+		t.Fatalf("expected big dripleaf name, got %q", got)
+	}
+}
+
+func TestFeatureBlockTagMatchesJavaSupportTags(t *testing.T) {
+	if !featureBlockTagMatches("podzol", "substrate_overworld") {
+		t.Fatal("expected substrate_overworld to include podzol")
+	}
+	if !featureBlockTagMatches("muddy_mangrove_roots", "substrate_overworld") {
+		t.Fatal("expected substrate_overworld to include muddy mangrove roots")
+	}
+	if !featureBlockTagMatches("coarse_dirt", "supports_big_dripleaf") {
+		t.Fatal("expected supports_big_dripleaf to include coarse dirt")
+	}
+	if !featureBlockTagMatches("red_sand", "azalea_grows_on") {
+		t.Fatal("expected azalea_grows_on to include red sand")
+	}
+	if !featureBlockTagMatches("terracotta", "azalea_grows_on") || !featureBlockTagMatches("white_terracotta", "azalea_grows_on") {
+		t.Fatal("expected azalea_grows_on to include terracotta variants")
+	}
+	if !featureBlockTagMatches("moss_carpet", "mangrove_roots_can_grow_through") {
+		t.Fatal("expected mangrove_roots_can_grow_through to include moss carpet")
+	}
+	if !featureBlockTagMatches("mangrove_log", "mangrove_logs_can_grow_through") {
+		t.Fatal("expected mangrove_logs_can_grow_through to include mangrove logs")
+	}
+	if featureBlockTagMatches("air", "mangrove_logs_can_grow_through") {
+		t.Fatal("expected mangrove_logs_can_grow_through to reject air")
+	}
+	if !featureBlockTagMatches("cave_vines", "moss_replaceable") {
+		t.Fatal("expected moss_replaceable to include cave vines")
+	}
+	if !featureBlockTagMatches("gravel", "azalea_root_replaceable") {
+		t.Fatal("expected azalea_root_replaceable to include gravel")
+	}
+	if !featureBlockTagMatches("dandelion", "replaceable_by_trees") {
+		t.Fatal("expected replaceable_by_trees to include small flowers")
+	}
+	if featureBlockTagMatches("red_mushroom", "replaceable_by_trees") {
+		t.Fatal("expected replaceable_by_trees to reject mushrooms")
+	}
+	if featureBlockTagMatches("snow", "replaceable_by_trees") {
+		t.Fatal("expected replaceable_by_trees to reject snow layers")
+	}
+}
+
+func TestMangrovePropaguleSurvivesOnMudAndClay(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	for _, tc := range []struct {
+		name string
+		base world.Block
+		pos  cube.Pos
+	}{
+		{name: "mud", base: block.Mud{}, pos: cube.Pos{8, 1, 8}},
+		{name: "clay", base: block.Clay{}, pos: cube.Pos{9, 1, 9}},
+	} {
+		c := chunk.New(g.airRID, cube.Range{-64, 319})
+		c.SetBlock(uint8(tc.pos[0]), 0, uint8(tc.pos[2]), 0, world.BlockRuntimeID(tc.base))
+
+		ok := g.canBlockStateSurvive(c, tc.pos, gen.BlockState{
+			Name: "minecraft:mangrove_propagule",
+			Properties: map[string]string{
+				"age":         "0",
+				"hanging":     "false",
+				"stage":       "0",
+				"waterlogged": "false",
+			},
+		}, nil, c.Range().Min(), c.Range().Max())
+		if !ok {
+			t.Fatalf("expected mangrove propagule to survive on %s", tc.name)
+		}
+	}
+}
+
+func TestAzaleaSurvivesOnMud(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
 	g := New(0)
 	c := chunk.New(g.airRID, cube.Range{-64, 319})
 	c.SetBlock(8, 0, 8, 0, world.BlockRuntimeID(block.Mud{}))
 
-	ok := g.canBlockStateSurvive(c, cube.Pos{8, 1, 8}, gen.BlockState{
-		Name: "minecraft:mangrove_propagule",
+	if !g.canBlockStateSurvive(c, cube.Pos{8, 1, 8}, gen.BlockState{Name: "minecraft:azalea"}, nil, c.Range().Min(), c.Range().Max()) {
+		t.Fatal("expected azalea to survive on mud")
+	}
+}
+
+func TestDripleafSurvivalMatchesJavaSupportTags(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	c.SetBlock(4, 0, 4, 0, world.BlockRuntimeID(block.MossBlock{}))
+	c.SetBlock(5, 0, 5, 0, world.BlockRuntimeID(block.Stone{}))
+	c.SetBlock(6, 0, 6, 0, world.BlockRuntimeID(block.Farmland{}))
+	c.SetBlock(7, 0, 7, 0, world.BlockRuntimeID(block.Stone{}))
+
+	if !g.canBlockStateSurvive(c, cube.Pos{4, 1, 4}, gen.BlockState{
+		Name: "minecraft:small_dripleaf",
 		Properties: map[string]string{
-			"age":         "0",
-			"hanging":     "true",
-			"stage":       "0",
-			"waterlogged": "false",
+			"facing": "north",
+			"half":   "lower",
 		},
-	}, nil, c.Range().Min(), c.Range().Max())
-	if !ok {
-		t.Fatal("expected mangrove propagule to survive on mud")
+	}, nil, c.Range().Min(), c.Range().Max()) {
+		t.Fatal("expected small dripleaf to survive on moss block")
+	}
+	if g.canBlockStateSurvive(c, cube.Pos{5, 1, 5}, gen.BlockState{
+		Name: "minecraft:small_dripleaf",
+		Properties: map[string]string{
+			"facing": "north",
+			"half":   "lower",
+		},
+	}, nil, c.Range().Min(), c.Range().Max()) {
+		t.Fatal("expected small dripleaf to reject unsupported stone")
+	}
+	if !g.canBlockStateSurvive(c, cube.Pos{6, 1, 6}, gen.BlockState{
+		Name: "minecraft:big_dripleaf",
+		Properties: map[string]string{
+			"facing": "north",
+			"tilt":   "none",
+		},
+	}, nil, c.Range().Min(), c.Range().Max()) {
+		t.Fatal("expected big dripleaf to survive on farmland")
+	}
+	if g.canBlockStateSurvive(c, cube.Pos{7, 1, 7}, gen.BlockState{
+		Name: "minecraft:big_dripleaf",
+		Properties: map[string]string{
+			"facing": "north",
+			"tilt":   "none",
+		},
+	}, nil, c.Range().Min(), c.Range().Max()) {
+		t.Fatal("expected big dripleaf to reject unsupported stone")
 	}
 }
 
@@ -278,12 +443,339 @@ func TestExecuteConfiguredOakTreePlacesBlocks(t *testing.T) {
 
 	rng := gen.NewXoroshiro128FromSeed(1)
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
-	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "plains", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
 		t.Fatal("expected oak configured feature to place a tree")
 	}
 	if countTreeBlocks(c) == 0 {
 		t.Fatal("expected oak configured feature to create logs or leaves")
 	}
+}
+
+func TestExecuteConfiguredOakTreeReplacesGrassBelowTrunkWithDirt(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Grass{}))
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected oak configured feature to place a tree")
+	}
+
+	b, ok := world.BlockByRuntimeID(c.Block(8, 0, 8, 0))
+	if !ok {
+		t.Fatal("expected block below oak trunk to resolve")
+	}
+	if _, ok := b.(block.Dirt); !ok {
+		t.Fatalf("expected oak below-trunk provider to replace grass with dirt, got %T", b)
+	}
+}
+
+func TestTreeLeafUpdateKeepsConnectedLeavesStable(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	logPos := cube.Pos{8, 1, 8}
+	leafPos := cube.Pos{9, 1, 8}
+	if !g.setFeatureBlock(c, logPos, block.Log{Wood: block.OakWood(), Axis: cube.Y}) {
+		t.Fatal("expected test log placement to succeed")
+	}
+	if !g.setFeatureBlock(c, leafPos, block.Leaves{Type: block.OakLeaves(), ShouldUpdate: true}) {
+		t.Fatal("expected test leaf placement to succeed")
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	rt := newTreeRuntime(g, c, logPos, gen.TreeConfig{}, c.Range().Min(), c.Range().Max(), &rng)
+	rt.trunks.add(logPos)
+	rt.foliage.add(leafPos)
+	rt.updateLeaves()
+
+	shouldUpdate, ok := leafShouldUpdateAt(c, leafPos)
+	if !ok {
+		t.Fatal("expected connected leaf block to remain present")
+	}
+	if shouldUpdate {
+		t.Fatal("expected leaf within six blocks of the trunk to be marked stable")
+	}
+}
+
+func TestTreeLeafUpdateMarksDisconnectedLeavesForDecay(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	logPos := cube.Pos{1, 1, 1}
+	leafPos := cube.Pos{8, 1, 1}
+	if !g.setFeatureBlock(c, logPos, block.Log{Wood: block.OakWood(), Axis: cube.Y}) {
+		t.Fatal("expected test log placement to succeed")
+	}
+	if !g.setFeatureBlock(c, leafPos, block.Leaves{Type: block.OakLeaves(), ShouldUpdate: false}) {
+		t.Fatal("expected test leaf placement to succeed")
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	rt := newTreeRuntime(g, c, logPos, gen.TreeConfig{}, c.Range().Min(), c.Range().Max(), &rng)
+	rt.trunks.add(logPos)
+	rt.foliage.add(leafPos)
+	rt.updateLeaves()
+
+	shouldUpdate, ok := leafShouldUpdateAt(c, leafPos)
+	if !ok {
+		t.Fatal("expected disconnected leaf block to remain present")
+	}
+	if !shouldUpdate {
+		t.Fatal("expected leaf beyond the Java connection radius to be marked for decay")
+	}
+}
+
+func TestExecuteConfiguredFancyOakPlacesHorizontalBranchLogs(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	for seed := int64(1); seed <= 256; seed++ {
+		g := New(0)
+		c := chunk.New(g.airRID, cube.Range{-64, 319})
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Grass{}))
+			}
+		}
+
+		rng := gen.NewXoroshiro128FromSeed(seed)
+		biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeForest)
+		if g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "fancy_oak"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) &&
+			countHorizontalLogsForWood(c, block.OakWood()) > 0 {
+			return
+		}
+	}
+	t.Fatal("expected fancy_oak to place horizontal branch logs for at least one deterministic seed")
+}
+
+func TestExecuteConfiguredCherryPlacesHorizontalBranchLogs(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	for seed := int64(1); seed <= 8; seed++ {
+		g := New(0)
+		c := chunk.New(g.airRID, cube.Range{-64, 319})
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Grass{}))
+			}
+		}
+
+		rng := gen.NewXoroshiro128FromSeed(seed)
+		biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeCherryGrove)
+		if g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "cherry"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) &&
+			countHorizontalLogsForWood(c, block.CherryWood()) > 0 {
+			return
+		}
+	}
+	t.Fatal("expected cherry trunk placer to place horizontal branch logs for at least one deterministic seed")
+}
+
+func TestExecuteConfiguredAzaleaTreeRejectsBlockingVines(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Grass{}))
+		}
+	}
+	c.SetBlock(8, 2, 8, 0, world.BlockRuntimeID((block.Vines{}).WithAttachment(cube.North, true)))
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeLushCaves)
+	if g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "azalea_tree"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected azalea_tree to reject trunk space blocked by vines when ignore_vines is false")
+	}
+}
+
+func TestExecuteConfiguredMangrovePlacesRootBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	rng := gen.NewXoroshiro128FromSeed(1)
+	origin := cube.Pos{8, 2, 8}
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Stone{}))
+		}
+	}
+	cfg := gen.TreeConfig{
+		RootPlacer: gen.TypedJSONValue{
+			Type: "mangrove_root_placer",
+			Data: json.RawMessage(`{
+				"root_provider":{"type":"minecraft:simple_state_provider","state":{"Name":"minecraft:mangrove_roots","Properties":{"waterlogged":"false"}}},
+				"mangrove_root_placement":{
+					"can_grow_through":"",
+					"max_root_length":32,
+					"max_root_width":8,
+					"muddy_roots_in":["minecraft:mud"],
+					"muddy_roots_provider":{"type":"minecraft:simple_state_provider","state":{"Name":"minecraft:muddy_mangrove_roots","Properties":{"axis":"y"}}},
+					"random_skew_chance":1.0
+				}
+			}`),
+		},
+	}
+
+	rt := newTreeRuntime(g, c, origin, cfg, c.Range().Min(), c.Range().Max(), &rng)
+	if !rt.placeRoots(origin, origin) {
+		t.Fatal("expected mangrove root placement to succeed with a generous root budget")
+	}
+	if countBlocksNamed(c, "minecraft:mangrove_roots")+countBlocksNamed(c, "minecraft:muddy_mangrove_roots") == 0 {
+		t.Fatal("expected mangrove root placement to place root blocks")
+	}
+}
+
+func TestMangroveRootPlacementRejectsExceededMaxRootLength(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	rng := gen.NewXoroshiro128FromSeed(1)
+	origin := cube.Pos{8, 1, 8}
+	cfg := gen.TreeConfig{
+		RootPlacer: gen.TypedJSONValue{
+			Type: "mangrove_root_placer",
+			Data: json.RawMessage(`{
+				"root_provider":{"type":"minecraft:simple_state_provider","state":{"Name":"minecraft:mangrove_roots","Properties":{"waterlogged":"false"}}},
+				"mangrove_root_placement":{
+					"can_grow_through":"",
+					"max_root_length":0,
+					"max_root_width":8,
+					"muddy_roots_in":["minecraft:mud"],
+					"muddy_roots_provider":{"type":"minecraft:simple_state_provider","state":{"Name":"minecraft:muddy_mangrove_roots","Properties":{"axis":"y"}}},
+					"random_skew_chance":0.2
+				}
+			}`),
+		},
+	}
+
+	rt := newTreeRuntime(g, c, origin, cfg, c.Range().Min(), c.Range().Max(), &rng)
+	if rt.placeRoots(origin, origin.Add(cube.Pos{0, 1, 0})) {
+		t.Fatal("expected mangrove root placement to fail when the root path exceeds max_root_length")
+	}
+}
+
+func TestExecuteConfiguredMegaPinePlacesAlterGroundPodzol(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Grass{}))
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeOldGrowthPineTaiga)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "mega_pine"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected mega_pine configured feature to place a tree")
+	}
+	if countBlocksNamed(c, "minecraft:podzol") == 0 {
+		t.Fatal("expected mega_pine alter_ground decorator to place podzol")
+	}
+}
+
+func TestExecuteConfiguredMegaJunglePlacesVines(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	for seed := int64(1); seed <= 32; seed++ {
+		g := New(0)
+		c := chunk.New(g.airRID, cube.Range{-64, 319})
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Grass{}))
+			}
+		}
+
+		rng := gen.NewXoroshiro128FromSeed(seed)
+		biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeJungle)
+		if g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "mega_jungle_tree"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) &&
+			countBlocksNamed(c, "minecraft:vine") > 0 {
+			return
+		}
+	}
+	t.Fatal("expected mega_jungle_tree decorators to place vines for at least one deterministic seed")
+}
+
+func TestExecuteConfiguredBirchBeesPlacesBeeNest(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	for seed := int64(1); seed <= 1024; seed++ {
+		g := New(0)
+		c := chunk.New(g.airRID, cube.Range{-64, 319})
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Grass{}))
+			}
+		}
+
+		rng := gen.NewXoroshiro128FromSeed(seed)
+		biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
+		if g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "birch_bees_005"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) &&
+			countBlocksNamed(c, "minecraft:bee_nest") > 0 {
+			return
+		}
+	}
+	t.Fatal("expected birch_bees_005 decorator to place a bee nest for at least one deterministic seed")
+}
+
+func TestRunPlacedTreeFeatureAcrossRegionReplaysNeighbourTreesIntoCenterChunk(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	const featureName = "trees_birch"
+	for seed := int64(1); seed <= 1024; seed++ {
+		g := New(seed)
+		featureIndex, ok := g.biomeGeneration.featureIndex(gen.GenerationStepVegetalDecoration, featureName)
+		if !ok {
+			t.Fatalf("expected %s feature index", featureName)
+		}
+
+		region := &treeDecorationRegion{
+			centerChunkX: 0,
+			centerChunkZ: 0,
+			minY:         -64,
+			maxY:         319,
+			slots:        make(map[[2]int]treeDecorationRegionSlot, 9),
+		}
+		for chunkX := -1; chunkX <= 1; chunkX++ {
+			for chunkZ := -1; chunkZ <= 1; chunkZ++ {
+				c := chunk.New(g.airRID, cube.Range{region.minY, region.maxY})
+				for x := 0; x < 16; x++ {
+					for z := 0; z < 16; z++ {
+						c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Grass{}))
+					}
+				}
+
+				biome := gen.BiomePlains
+				if chunkX == -1 && chunkZ == 0 {
+					biome = gen.BiomeBirchForest
+				}
+				region.set(chunkX, chunkZ, c, filledTestBiomeVolume(region.minY, region.maxY, biome))
+			}
+		}
+
+		g.runPlacedTreeFeatureAcrossRegion(region, gen.GenerationStepVegetalDecoration, featureName, featureIndex)
+		center, ok := region.slot(0, 0)
+		if !ok {
+			t.Fatal("expected center chunk in tree replay region")
+		}
+		if countTreeBlocks(center.chunk) > 0 {
+			return
+		}
+	}
+	t.Fatal("expected at least one deterministic seed to replay a neighbouring birch tree into the center chunk")
 }
 
 func TestExecuteNetherQuartzOrePlacesBlocks(t *testing.T) {
@@ -350,10 +842,13 @@ func TestRunPlacedFeatureNetherQuartzPlacesBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to load ore_quartz_nether: %v", err)
 	}
-	biomeName := biomeKey(gen.BiomeNetherWastes)
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeNetherWastes)
-	rng := g.featureRNG(0, 0, biomeName, "ore_quartz_nether")
-	positions, ok := g.applyPlacementModifiers(c, biomes, []cube.Pos{{0, c.Range().Min(), 0}}, placed.Placement, biomeName, 0, 0, c.Range().Min(), c.Range().Max(), &rng)
+	featureIndex, ok := g.biomeGeneration.featureIndex(gen.GenerationStepUndergroundDecoration, "ore_quartz_nether")
+	if !ok {
+		t.Fatal("expected ore_quartz_nether feature index")
+	}
+	rng := g.featureRNG(g.decorationSeed(0, 0), featureIndex, gen.GenerationStepUndergroundDecoration)
+	positions, ok := g.applyPlacementModifiers(c, biomes, []cube.Pos{{0, c.Range().Min(), 0}}, placed.Placement, "ore_quartz_nether", 0, 0, c.Range().Min(), c.Range().Max(), &rng)
 	if !ok {
 		t.Fatal("expected placement modifiers for ore_quartz_nether to be supported")
 	}
@@ -361,7 +856,7 @@ func TestRunPlacedFeatureNetherQuartzPlacesBlocks(t *testing.T) {
 		t.Fatal("expected ore_quartz_nether placement modifiers to produce candidate positions")
 	}
 	for _, pos := range positions {
-		g.executeConfiguredFeature(c, biomes, pos, placed.Feature, biomeName, 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0)
+		g.executeConfiguredFeature(c, biomes, pos, placed.Feature, "ore_quartz_nether", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0)
 	}
 
 	totalOres := 0
@@ -437,7 +932,7 @@ func TestExecuteConfiguredOakTreeHasRoundedTop(t *testing.T) {
 
 	rng := gen.NewXoroshiro128FromSeed(1)
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
-	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "plains", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
 		t.Fatal("expected oak configured feature to place a tree")
 	}
 
@@ -475,7 +970,7 @@ func TestExecuteConfiguredOakTreeRejectsBlockedCanopy(t *testing.T) {
 	buildSoil(preview)
 	biomes := filledTestBiomeVolume(preview.Range().Min(), preview.Range().Max(), gen.BiomePlains)
 	previewRNG := gen.NewXoroshiro128FromSeed(1)
-	if !g.executeConfiguredFeature(preview, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "plains", 0, 0, preview.Range().Min(), preview.Range().Max(), &previewRNG, 0) {
+	if !g.executeConfiguredFeature(preview, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "", 0, 0, preview.Range().Min(), preview.Range().Max(), &previewRNG, 0) {
 		t.Fatal("expected preview oak tree to place")
 	}
 	top, ok := highestTreeLog(preview)
@@ -489,7 +984,7 @@ func TestExecuteConfiguredOakTreeRejectsBlockedCanopy(t *testing.T) {
 	blocked.SetBlock(uint8(obstacle[0]), int16(obstacle[1]), uint8(obstacle[2]), 0, world.BlockRuntimeID(block.Stone{}))
 
 	rng := gen.NewXoroshiro128FromSeed(1)
-	if g.executeConfiguredFeature(blocked, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "plains", 0, 0, blocked.Range().Min(), blocked.Range().Max(), &rng, 0) {
+	if g.executeConfiguredFeature(blocked, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "oak"}, "", 0, 0, blocked.Range().Min(), blocked.Range().Max(), &rng, 0) {
 		t.Fatalf("expected blocked oak tree generation to fail when canopy space at %v is occupied", obstacle)
 	}
 	if countTreeBlocks(blocked) != 0 {
@@ -510,7 +1005,7 @@ func TestExecutePlacedOakCheckedPlacesBlocks(t *testing.T) {
 
 	rng := gen.NewXoroshiro128FromSeed(1)
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
-	if !g.executePlacedFeatureRef(c, biomes, cube.Pos{8, 1, 8}, gen.PlacedFeatureRef{Name: "oak_checked"}, "plains", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+	if !g.executePlacedFeatureRef(c, biomes, cube.Pos{8, 1, 8}, gen.PlacedFeatureRef{Name: "oak_checked"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
 		t.Fatal("expected oak_checked placed feature to place a tree")
 	}
 	if countTreeBlocks(c) == 0 {
@@ -600,8 +1095,12 @@ func TestTreesBirchPlacementSkipsWaterColumns(t *testing.T) {
 		t.Fatalf("failed to load trees_birch: %v", err)
 	}
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeBirchForest)
-	rng := g.featureRNG(0, 0, biomeKey(gen.BiomeBirchForest), "trees_birch")
-	positions, ok := g.applyPlacementModifiers(c, biomes, []cube.Pos{{0, c.Range().Min(), 0}}, placed.Placement, biomeKey(gen.BiomeBirchForest), 0, 0, c.Range().Min(), c.Range().Max(), &rng)
+	featureIndex, ok := g.biomeGeneration.featureIndex(gen.GenerationStepVegetalDecoration, "trees_birch")
+	if !ok {
+		t.Fatal("expected trees_birch feature index")
+	}
+	rng := g.featureRNG(g.decorationSeed(0, 0), featureIndex, gen.GenerationStepVegetalDecoration)
+	positions, ok := g.applyPlacementModifiers(c, biomes, []cube.Pos{{0, c.Range().Min(), 0}}, placed.Placement, "trees_birch", 0, 0, c.Range().Min(), c.Range().Max(), &rng)
 	if !ok {
 		t.Fatal("expected trees_birch placement modifiers to be supported")
 	}
@@ -626,7 +1125,7 @@ func TestGenerateChunkAtSpawnHintPlacesTrees(t *testing.T) {
 	}
 }
 
-func TestExecuteConfiguredBambooPlacesStalks(t *testing.T) {
+func TestExecuteConfiguredBambooPlacesBamboo(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
 	g := New(0)
@@ -639,23 +1138,91 @@ func TestExecuteConfiguredBambooPlacesStalks(t *testing.T) {
 
 	rng := gen.NewXoroshiro128FromSeed(1)
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeBambooJungle)
-	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "bamboo_some_podzol"}, "bamboo_jungle", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "bamboo_some_podzol"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
 		t.Fatal("expected bamboo configured feature to place stalks")
 	}
 
 	found := false
+	largeLeaves := false
 	for y := 1; y <= c.Range().Max(); y++ {
 		b, ok := world.BlockByRuntimeID(c.Block(8, int16(y), 8, 0))
 		if !ok {
 			continue
 		}
-		if _, ok := b.(block.SugarCane); ok {
+		bamboo, ok := b.(block.Bamboo)
+		if ok {
 			found = true
+			if bamboo.LeafSize == block.BambooLargeLeaves() {
+				largeLeaves = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected bamboo blocks to be present")
+	}
+	if !largeLeaves {
+		t.Fatal("expected bamboo feature to place leafy bamboo top states")
+	}
+}
+
+func TestExecuteConfiguredBambooPodzolizesSubstrateOverworld(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.RootedDirt{}))
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	if !g.executeBamboo(c, cube.Pos{8, 1, 8}, gen.BambooConfig{Probability: 1}, 0, 0, c.Range().Min(), c.Range().Max(), &rng) {
+		t.Fatal("expected bamboo feature to place stalks")
+	}
+
+	found := false
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			b, ok := world.BlockByRuntimeID(c.Block(uint8(x), 0, uint8(z), 0))
+			if !ok {
+				continue
+			}
+			if _, ok := b.(block.Podzol); ok {
+				found = true
+				break
+			}
+		}
+		if found {
 			break
 		}
 	}
 	if !found {
-		t.Fatal("expected bamboo fallback stalks to be present")
+		t.Fatal("expected bamboo podzol pass to replace rooted dirt like Java's substrate_overworld tag")
+	}
+}
+
+func TestPlaceFeatureStateSmallDripleafIsAtomic(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	c.SetBlock(8, 0, 8, 0, world.BlockRuntimeID(block.MossBlock{}))
+	c.SetBlock(8, 2, 8, 0, world.BlockRuntimeID(block.Stone{}))
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	ok := g.placeFeatureState(c, cube.Pos{8, 1, 8}, gen.BlockState{
+		Name: "minecraft:small_dripleaf",
+		Properties: map[string]string{
+			"facing": "north",
+			"half":   "lower",
+		},
+	}, &rng, c.Range().Min(), c.Range().Max())
+	if ok {
+		t.Fatal("expected small dripleaf placement to fail when the upper half is blocked")
+	}
+	if c.Block(8, 1, 8, 0) != g.airRID {
+		t.Fatalf("expected failed small dripleaf placement to leave the lower block untouched, got runtime ID %d", c.Block(8, 1, 8, 0))
 	}
 }
 
@@ -673,7 +1240,7 @@ func TestExecuteConfiguredMossPatchPlacesGround(t *testing.T) {
 
 	rng := gen.NewXoroshiro128FromSeed(1)
 	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeLushCaves)
-	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "moss_patch"}, "lush_caves", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "moss_patch"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
 		t.Fatal("expected moss_patch configured feature to place ground blocks")
 	}
 
@@ -684,8 +1251,7 @@ func TestExecuteConfiguredMossPatchPlacesGround(t *testing.T) {
 			if !ok {
 				continue
 			}
-			name, _ := b.EncodeBlock()
-			if strings.TrimPrefix(name, "minecraft:") == "moss_block" {
+			if _, ok := b.(block.MossBlock); ok {
 				found = true
 				break
 			}
@@ -796,6 +1362,75 @@ func isLeafBlockAt(c *chunk.Chunk, pos cube.Pos) bool {
 	}
 	name, _ := b.EncodeBlock()
 	return strings.HasSuffix(strings.TrimPrefix(name, "minecraft:"), "_leaves")
+}
+
+func countHorizontalLogsForWood(c *chunk.Chunk, wood block.WoodType) int {
+	total := 0
+	for y := c.Range().Min() + 1; y <= c.Range().Max(); y++ {
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				b, ok := world.BlockByRuntimeID(c.Block(uint8(x), int16(y), uint8(z), 0))
+				if !ok {
+					continue
+				}
+				log, ok := b.(block.Log)
+				if !ok || log.Wood != wood || log.Axis == cube.Y {
+					continue
+				}
+				total++
+			}
+		}
+	}
+	return total
+}
+
+func countMuddyMangroveRoots(c *chunk.Chunk) int {
+	total := 0
+	for y := c.Range().Min() + 1; y <= c.Range().Max(); y++ {
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				b, ok := world.BlockByRuntimeID(c.Block(uint8(x), int16(y), uint8(z), 0))
+				if !ok {
+					continue
+				}
+				if _, ok := b.(block.MuddyMangroveRoots); ok {
+					total++
+				}
+			}
+		}
+	}
+	return total
+}
+
+func countBlocksNamed(c *chunk.Chunk, name string) int {
+	total := 0
+	for y := c.Range().Min() + 1; y <= c.Range().Max(); y++ {
+		for x := 0; x < 16; x++ {
+			for z := 0; z < 16; z++ {
+				b, ok := world.BlockByRuntimeID(c.Block(uint8(x), int16(y), uint8(z), 0))
+				if !ok {
+					continue
+				}
+				blockName, _ := b.EncodeBlock()
+				if blockName == name {
+					total++
+				}
+			}
+		}
+	}
+	return total
+}
+
+func leafShouldUpdateAt(c *chunk.Chunk, pos cube.Pos) (bool, bool) {
+	b, ok := world.BlockByRuntimeID(c.Block(uint8(pos[0]&15), int16(pos[1]), uint8(pos[2]&15), 0))
+	if !ok {
+		return false, false
+	}
+	leaves, ok := b.(block.Leaves)
+	if !ok {
+		return false, false
+	}
+	return leaves.ShouldUpdate, true
 }
 
 func filledTestBiomeVolume(minY, maxY int, biome gen.Biome) sourceBiomeVolume {

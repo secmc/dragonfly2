@@ -69,6 +69,8 @@ type structurePlannerCandidate struct {
 	structureName       string
 	structureType       string
 	biomeTag            string
+	generationStep      gen.GenerationStep
+	hasGenerationStep   bool
 	terrainAdaptation   string
 	weight              int
 	generic             gen.GenericStructureDef
@@ -87,15 +89,115 @@ type weightedStartTemplate struct {
 	name       string
 	weight     int
 	size       [3]int
-	occupies   bool
 	ignoreAir  bool
 	projection string
 	jigsaws    []structureJigsaw
 	processors []structureProcessor
 }
 
+type structureStepEntry struct {
+	structureName  string
+	plannerIndex   int
+	structureIndex int
+}
+
+var javaStructureBootstrapOrder = []string{
+	"pillager_outpost",
+	"mineshaft",
+	"mineshaft_mesa",
+	"mansion",
+	"jungle_pyramid",
+	"desert_pyramid",
+	"igloo",
+	"shipwreck",
+	"shipwreck_beached",
+	"swamp_hut",
+	"stronghold",
+	"monument",
+	"ocean_ruin_cold",
+	"ocean_ruin_warm",
+	"fortress",
+	"nether_fossil",
+	"end_city",
+	"buried_treasure",
+	"bastion_remnant",
+	"village_plains",
+	"village_desert",
+	"village_savanna",
+	"village_snowy",
+	"village_taiga",
+	"ruined_portal",
+	"ruined_portal_desert",
+	"ruined_portal_jungle",
+	"ruined_portal_swamp",
+	"ruined_portal_mountain",
+	"ruined_portal_ocean",
+	"ruined_portal_nether",
+	"ancient_city",
+	"trail_ruins",
+	"trial_chambers",
+}
+
 func newStructureStartCache() *structureStartCache {
 	return &structureStartCache{byKey: make(map[structureStartKey]cachedStructureStart)}
+}
+
+func buildStructureStepOrder(planners []structurePlanner) [][]structureStepEntry {
+	order := make([][]structureStepEntry, featureStepCount)
+	indexByStep := make([]int, featureStepCount)
+	seenStructures := make(map[string]struct{}, len(javaStructureBootstrapOrder))
+
+	appendEntry := func(structureName string) {
+		for plannerIndex, planner := range planners {
+			step, ok := planner.generationStepForStructure(structureName)
+			if !ok {
+				continue
+			}
+			stepIndex := int(step)
+			if stepIndex < 0 || stepIndex >= featureStepCount {
+				return
+			}
+			order[stepIndex] = append(order[stepIndex], structureStepEntry{
+				structureName:  structureName,
+				plannerIndex:   plannerIndex,
+				structureIndex: indexByStep[stepIndex],
+			})
+			indexByStep[stepIndex]++
+			seenStructures[structureName] = struct{}{}
+			return
+		}
+	}
+
+	for _, structureName := range javaStructureBootstrapOrder {
+		appendEntry(structureName)
+	}
+	for plannerIndex, planner := range planners {
+		names := make([]string, 0, len(planner.candidateByName))
+		for structureName := range planner.candidateByName {
+			names = append(names, structureName)
+		}
+		sort.Strings(names)
+		for _, structureName := range names {
+			if _, ok := seenStructures[structureName]; ok {
+				continue
+			}
+			step, ok := planner.generationStepForStructure(structureName)
+			if !ok {
+				continue
+			}
+			stepIndex := int(step)
+			if stepIndex < 0 || stepIndex >= featureStepCount {
+				continue
+			}
+			order[stepIndex] = append(order[stepIndex], structureStepEntry{
+				structureName:  structureName,
+				plannerIndex:   plannerIndex,
+				structureIndex: indexByStep[stepIndex],
+			})
+			indexByStep[stepIndex]++
+		}
+	}
+	return order
 }
 
 func (c *structureStartCache) Lookup(key structureStartKey) (plannedStructureStart, bool, bool) {
@@ -246,6 +348,12 @@ func buildStructurePlanners(worldgen *gen.WorldgenRegistry, templates *gen.Struc
 			default:
 				continue
 			}
+			step, ok := structurePlannerCandidateStep(candidate)
+			if !ok {
+				continue
+			}
+			candidate.generationStep = step
+			candidate.hasGenerationStep = true
 			planner.candidateByName[structureName] = len(planner.candidates)
 			planner.candidates = append(planner.candidates, candidate)
 			planner.totalWeight += entry.Weight
@@ -308,7 +416,6 @@ func buildStartTemplates(worldgen *gen.WorldgenRegistry, templates *gen.Structur
 			name:       single.Location,
 			weight:     entry.Weight,
 			size:       template.Size,
-			occupies:   templateHasPlaceableBlocks(template),
 			ignoreAir:  entry.Element.ElementType == "legacy_single_pool_element",
 			projection: normalizeIdentifierName(single.Projection),
 			jigsaws:    extractTemplateJigsaws(template),
@@ -348,18 +455,146 @@ func (g Generator) placeStructures(c *chunk.Chunk, biomes sourceBiomeVolume, chu
 	}
 
 	surfaceSampler := newStructureHeightSampler(g, minY, maxY)
-	for _, planner := range g.structurePlanners {
-		g.placeStructureSet(c, biomes, chunkX, chunkZ, minY, maxY, planner, surfaceSampler)
+	for stepIndex := 0; stepIndex < featureStepCount; stepIndex++ {
+		g.placeStructuresForStep(c, biomes, chunkX, chunkZ, minY, maxY, gen.GenerationStep(stepIndex), surfaceSampler)
+	}
+}
+
+func (g Generator) placeStructuresForStep(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, step gen.GenerationStep, surfaceSampler *structureHeightSampler) {
+	if g.structureTemplates == nil || g.structureStarts == nil || len(g.structurePlanners) == 0 {
+		return
+	}
+	if surfaceSampler == nil {
+		surfaceSampler = newStructureHeightSampler(g, minY, maxY)
+	}
+	if int(step) < 0 || int(step) >= len(g.structureStepOrder) {
+		return
+	}
+	decorationSeed := g.decorationSeed(chunkX, chunkZ)
+	for _, entry := range g.structureStepOrder[step] {
+		planner := g.structurePlanners[entry.plannerIndex]
+		rng := g.featureRNG(decorationSeed, entry.structureIndex, step)
+		g.placePlannerStructureForStepEntry(c, biomes, chunkX, chunkZ, minY, maxY, planner, entry, surfaceSampler, &rng)
 	}
 }
 
 func (g Generator) placeStructureSet(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, planner structurePlanner, surfaceSampler *structureHeightSampler) {
+	for stepIndex := 0; stepIndex < featureStepCount; stepIndex++ {
+		g.placeStructureSetForStep(c, biomes, chunkX, chunkZ, minY, maxY, planner, gen.GenerationStep(stepIndex), surfaceSampler)
+	}
+}
+
+func (g Generator) placeStructureSetForStep(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, planner structurePlanner, step gen.GenerationStep, surfaceSampler *structureHeightSampler) {
+	for _, entry := range g.structureEntriesForPlannerStep(planner, step) {
+		rng := g.featureRNG(g.decorationSeed(chunkX, chunkZ), entry.structureIndex, step)
+		g.placePlannerStructureForStepEntry(c, biomes, chunkX, chunkZ, minY, maxY, planner, entry, surfaceSampler, &rng)
+	}
+}
+
+func (g Generator) structureEntriesForPlannerStep(planner structurePlanner, step gen.GenerationStep) []structureStepEntry {
+	if int(step) >= 0 && int(step) < len(g.structureStepOrder) {
+		var entries []structureStepEntry
+		for _, entry := range g.structureStepOrder[step] {
+			if entry.plannerIndex < 0 || entry.plannerIndex >= len(g.structurePlanners) {
+				continue
+			}
+			if g.structurePlanners[entry.plannerIndex].setName == planner.setName {
+				entries = append(entries, entry)
+			}
+		}
+		if len(entries) != 0 {
+			return entries
+		}
+	}
+	names := make([]string, 0, len(planner.candidateByName))
+	for structureName := range planner.candidateByName {
+		names = append(names, structureName)
+	}
+	sort.Strings(names)
+	entries := make([]structureStepEntry, 0, len(names))
+	for structureIndex, structureName := range names {
+		startStep, ok := planner.generationStepForStructure(structureName)
+		if !ok || startStep != step {
+			continue
+		}
+		entries = append(entries, structureStepEntry{
+			structureName:  structureName,
+			structureIndex: structureIndex,
+		})
+	}
+	return entries
+}
+
+func (g Generator) placePlannerStructureForStepEntry(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, planner structurePlanner, entry structureStepEntry, surfaceSampler *structureHeightSampler, rng *gen.Xoroshiro128) {
 	for _, startChunk := range g.plannerPotentialStartChunksNearChunk(planner, chunkX, chunkZ, 0, 0) {
 		start, ok := g.planStructureStart(planner, startChunk, minY, maxY, surfaceSampler)
 		if !ok || !structureIntersectsChunk(start, chunkX, chunkZ, minY, maxY) {
 			continue
 		}
-		g.placePlannedStructure(c, biomes, chunkX, chunkZ, minY, maxY, start)
+		if start.structureName != entry.structureName {
+			continue
+		}
+		g.placePlannedStructure(c, biomes, chunkX, chunkZ, minY, maxY, start, rng)
+	}
+}
+
+func (planner structurePlanner) generationStepForStructure(structureName string) (gen.GenerationStep, bool) {
+	index, ok := planner.candidateByName[structureName]
+	if !ok || index < 0 || index >= len(planner.candidates) {
+		return 0, false
+	}
+	candidate := planner.candidates[index]
+	if !candidate.hasGenerationStep {
+		return 0, false
+	}
+	return candidate.generationStep, true
+}
+
+func structurePlannerCandidateStep(candidate structurePlannerCandidate) (gen.GenerationStep, bool) {
+	switch candidate.structureType {
+	case "jigsaw":
+		return parseStructureGenerationStep(candidate.jigsaw.Step)
+	case "igloo", "buried_treasure", "swamp_hut", "desert_pyramid", "jungle_temple", "stronghold", "fortress", "mineshaft", "ocean_monument", "woodland_mansion", "end_city":
+		return parseStructureGenerationStep(candidate.generic.Step)
+	case "nether_fossil":
+		return parseStructureGenerationStep(candidate.netherFossil.Step)
+	case "shipwreck":
+		return parseStructureGenerationStep(candidate.shipwreck.Step)
+	case "ocean_ruin":
+		return parseStructureGenerationStep(candidate.oceanRuin.Step)
+	case "ruined_portal":
+		return parseStructureGenerationStep(candidate.ruinedPortal.Step)
+	default:
+		return 0, false
+	}
+}
+
+func parseStructureGenerationStep(step string) (gen.GenerationStep, bool) {
+	switch normalizeIdentifierName(step) {
+	case "raw_generation":
+		return gen.GenerationStepRawGeneration, true
+	case "lakes":
+		return gen.GenerationStepLakes, true
+	case "local_modifications":
+		return gen.GenerationStepLocalModifications, true
+	case "underground_structures":
+		return gen.GenerationStepUndergroundStructures, true
+	case "surface_structures":
+		return gen.GenerationStepSurfaceStructures, true
+	case "strongholds":
+		return gen.GenerationStepStrongholds, true
+	case "underground_ores":
+		return gen.GenerationStepUndergroundOres, true
+	case "underground_decoration":
+		return gen.GenerationStepUndergroundDecoration, true
+	case "fluid_springs":
+		return gen.GenerationStepFluidSprings, true
+	case "vegetal_decoration":
+		return gen.GenerationStepVegetalDecoration, true
+	case "top_layer_modification":
+		return gen.GenerationStepTopLayerModification, true
+	default:
+		return 0, false
 	}
 }
 
@@ -605,7 +840,7 @@ func structureIntersectsChunk(start plannedStructureStart, chunkX, chunkZ, minY,
 	}.intersectsChunk(chunkX, chunkZ, minY, maxY)
 }
 
-func (g Generator) placePlannedStructure(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, start plannedStructureStart) {
+func (g Generator) placePlannedStructure(c *chunk.Chunk, biomes sourceBiomeVolume, chunkX, chunkZ, minY, maxY int, start plannedStructureStart, structureRNG *gen.Xoroshiro128) {
 	for _, piece := range start.pieces {
 		if !piece.bounds.intersectsChunk(chunkX, chunkZ, minY, maxY) {
 			continue
@@ -645,19 +880,22 @@ func (g Generator) placePlannedStructure(c *chunk.Chunk, biomes sourceBiomeVolum
 			if piece.origin[1] <= minY || piece.origin[1] > maxY {
 				continue
 			}
-			biomeName := biomeKey(g.biomeSource.GetBiome(piece.origin[0], clamp(piece.origin[1], minY+1, maxY), piece.origin[2]))
-			rng := g.structureFeatureRNG(start.structureName, feature.featureName, piece.origin)
+			featureRNG := structureRNG
+			if featureRNG == nil {
+				rng := g.structureFeatureRNG(start.structureName, feature.featureName, piece.origin)
+				featureRNG = &rng
+			}
 			_ = g.executePlacedFeatureRef(
 				c,
 				biomes,
 				piece.origin,
 				gen.PlacedFeatureRef{Name: feature.featureName},
-				biomeName,
+				feature.featureName,
 				chunkX,
 				chunkZ,
 				minY,
 				maxY,
-				&rng,
+				featureRNG,
 				0,
 			)
 		}

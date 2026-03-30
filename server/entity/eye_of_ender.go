@@ -2,10 +2,14 @@ package entity
 
 import (
 	"github.com/df-mc/dragonfly/server/block/cube"
+	"github.com/df-mc/dragonfly/server/item"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/df-mc/dragonfly/server/world/generator/vanilla"
+	"github.com/df-mc/dragonfly/server/world/particle"
+	"github.com/df-mc/dragonfly/server/world/sound"
 	"github.com/go-gl/mathgl/mgl64"
 	"math"
+	"math/rand/v2"
 	"time"
 )
 
@@ -42,13 +46,17 @@ var eyeOfEnderProjectileConf = ProjectileBehaviourConfig{
 	Damage:  -1,
 }
 
+const eyeOfEnderStrongholdSearchChunks = 4096
+
 type EyeOfEnderBehaviour struct {
 	conf       EyeOfEnderBehaviourConfig
 	projectile *ProjectileBehaviour
 	target     mgl64.Vec3
 	lifetime   time.Duration
+	life       int
 	resolved   bool
 	hasTarget  bool
+	survive    bool
 	close      bool
 }
 
@@ -62,7 +70,7 @@ func (b *EyeOfEnderBehaviour) Tick(e *Ent, tx *world.Tx) *Movement {
 		return nil
 	}
 	if !b.resolved {
-		b.resolveTarget(tx, e.Position())
+		b.resolveTarget(tx, e)
 	}
 	if b.hasTarget {
 		return b.tickGuided(e, tx)
@@ -81,18 +89,15 @@ func (b *EyeOfEnderBehaviour) Tick(e *Ent, tx *world.Tx) *Movement {
 func (b *EyeOfEnderBehaviour) tickGuided(e *Ent, tx *world.Tx) *Movement {
 	pos := e.data.Pos
 	previousVel := e.data.Vel
-	vel := eyeOfEnderVelocityToward(pos, previousVel, b.target)
-	nextPos := pos.Add(vel)
+	nextPos := pos.Add(previousVel)
+	vel := eyeOfEnderUpdateDeltaMovement(previousVel, nextPos, b.target)
 	rot := eyeOfEnderRotationFromVelocity(vel, e.data.Rot)
 
 	e.data.Pos, e.data.Vel, e.data.Rot = nextPos, vel, rot
-	delta := b.target.Sub(nextPos)
-	delta[1] = 0
-	if delta.Len() < 12 {
-		b.close = true
-	}
-	if e.Age() >= b.lifetime {
-		b.close = true
+	b.life++
+	if b.life > 80 {
+		b.finishGuided(e, tx)
+		return nil
 	}
 	return &Movement{
 		v:        tx.Viewers(pos),
@@ -110,7 +115,7 @@ type eyeOfEnderStructureLocator interface {
 	LocateNearestPlannedStructureStart(setName string, origin cube.Pos, maxChunkDistance int) (vanilla.PlannedStructureInfo, bool)
 }
 
-func (b *EyeOfEnderBehaviour) resolveTarget(tx *world.Tx, pos mgl64.Vec3) {
+func (b *EyeOfEnderBehaviour) resolveTarget(tx *world.Tx, e *Ent) {
 	b.resolved = true
 
 	locator, ok := tx.World().Generator().(eyeOfEnderStructureLocator)
@@ -119,45 +124,63 @@ func (b *EyeOfEnderBehaviour) resolveTarget(tx *world.Tx, pos mgl64.Vec3) {
 	}
 	info, ok := locator.LocateNearestPlannedStructureStart(
 		"strongholds",
-		cube.PosFromVec3(pos),
-		4096,
+		cube.PosFromVec3(e.Position()),
+		eyeOfEnderStrongholdSearchChunks,
 	)
 	if !ok {
 		return
 	}
 
-	sizeX := max(info.Size[0], 1)
-	sizeZ := max(info.Size[2], 1)
-	b.target = mgl64.Vec3{
-		float64(info.Origin.X()) + float64(sizeX)/2,
-		pos[1],
-		float64(info.Origin.Z()) + float64(sizeZ)/2,
+	structureTarget := mgl64.Vec3{
+		float64(info.Origin.X()),
+		float64(info.Origin.Y()),
+		float64(info.Origin.Z()),
+	}
+	b.target = eyeOfEnderSignalTarget(e.Position(), structureTarget)
+	if e.data.Vel.LenSqr() < 1e-12 {
+		e.data.Vel = eyeOfEnderUpdateDeltaMovement(zeroVec3, e.Position(), b.target)
 	}
 	b.hasTarget = true
+	b.life = 0
+	b.survive = rand.IntN(5) > 0
 }
 
-func eyeOfEnderVelocityToward(pos, vel, target mgl64.Vec3) mgl64.Vec3 {
+func eyeOfEnderSignalTarget(pos, target mgl64.Vec3) mgl64.Vec3 {
 	delta := target.Sub(pos)
 	delta[1] = 0
 	dist := delta.Len()
-	if dist < 0.001 {
-		return vel.Mul(0.8)
+	if dist > 12 {
+		return pos.Add(mgl64.Vec3{
+			delta[0] / dist * 12,
+			8,
+			delta[2] / dist * 12,
+		})
 	}
+	return target
+}
 
-	dir := delta.Mul(1 / dist)
-	speed := clampFloat(0.55+dist/96.0, 0.7, 1.6)
-	desiredY := 0.08
-	if dist < 64 {
-		desiredY = 0.05
+func eyeOfEnderUpdateDeltaMovement(oldMovement, pos, target mgl64.Vec3) mgl64.Vec3 {
+	horizontalDelta := mgl64.Vec3{target[0] - pos[0], 0, target[2] - pos[2]}
+	horizontalLength := math.Hypot(horizontalDelta[0], horizontalDelta[2])
+	oldHorizontalSpeed := math.Hypot(oldMovement[0], oldMovement[2])
+	wantedSpeed := oldHorizontalSpeed + (horizontalLength-oldHorizontalSpeed)*0.0025
+	movementY := oldMovement[1]
+	if horizontalLength < 1 {
+		wantedSpeed *= 0.8
+		movementY *= 0.8
 	}
-	if dist < 24 {
-		desiredY = 0.02
+	wantedMovementY := -1.0
+	if pos[1]-oldMovement[1] < target[1] {
+		wantedMovementY = 1.0
 	}
-	desired := mgl64.Vec3{dir[0] * speed, desiredY, dir[2] * speed}
-	if vel.Len() == 0 {
-		return desired
+	if horizontalLength < 0.000001 {
+		return mgl64.Vec3{0, movementY + (wantedMovementY-movementY)*0.015, 0}
 	}
-	return vel.Mul(0.72).Add(desired.Mul(0.28))
+	return horizontalDelta.Mul(wantedSpeed / horizontalLength).Add(mgl64.Vec3{
+		0,
+		movementY + (wantedMovementY-movementY)*0.015,
+		0,
+	})
 }
 
 func eyeOfEnderRotationFromVelocity(vel mgl64.Vec3, fallback cube.Rotation) cube.Rotation {
@@ -170,14 +193,15 @@ func eyeOfEnderRotationFromVelocity(vel mgl64.Vec3, fallback cube.Rotation) cube
 	return cube.Rotation{yaw, pitch}
 }
 
-func clampFloat(value, minValue, maxValue float64) float64 {
-	if value < minValue {
-		return minValue
+func (b *EyeOfEnderBehaviour) finishGuided(e *Ent, tx *world.Tx) {
+	tx.PlaySound(e.Position(), sound.ItemBreak{})
+	if b.survive {
+		tx.AddEntity(NewItem(world.EntitySpawnOpts{Position: e.Position()}, item.NewStack(item.EyeOfEnder{}, 1)))
+	} else {
+		tx.AddParticle(e.Position(), particle.EndermanTeleport{})
 	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
+	b.close = true
+	_ = e.Close()
 }
 
 // EyeOfEnderType is a world.EntityType implementation for thrown eyes of

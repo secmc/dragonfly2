@@ -665,15 +665,17 @@ func (p *OreTargetPredicate) UnmarshalJSON(data []byte) error {
 }
 
 type TreeConfig struct {
-	Decorators      []FeatureDecorator `json:"decorators"`
-	DirtProvider    StateProvider      `json:"dirt_provider"`
-	FoliagePlacer   TypedJSONValue     `json:"foliage_placer"`
-	FoliageProvider StateProvider      `json:"foliage_provider"`
-	ForceDirt       bool               `json:"force_dirt"`
-	IgnoreVines     bool               `json:"ignore_vines"`
-	MinimumSize     TypedJSONValue     `json:"minimum_size"`
-	TrunkPlacer     TypedJSONValue     `json:"trunk_placer"`
-	TrunkProvider   StateProvider      `json:"trunk_provider"`
+	BelowTrunkProvider StateProvider      `json:"below_trunk_provider"`
+	Decorators         []FeatureDecorator `json:"decorators"`
+	DirtProvider       StateProvider      `json:"dirt_provider"`
+	FoliagePlacer      TypedJSONValue     `json:"foliage_placer"`
+	FoliageProvider    StateProvider      `json:"foliage_provider"`
+	ForceDirt          bool               `json:"force_dirt"`
+	IgnoreVines        bool               `json:"ignore_vines"`
+	MinimumSize        TypedJSONValue     `json:"minimum_size"`
+	RootPlacer         TypedJSONValue     `json:"root_placer"`
+	TrunkPlacer        TypedJSONValue     `json:"trunk_placer"`
+	TrunkProvider      StateProvider      `json:"trunk_provider"`
 }
 
 type FallenTreeConfig struct {

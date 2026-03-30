@@ -9,6 +9,12 @@ import (
 	"github.com/df-mc/dragonfly/server/world"
 )
 
+func TestEyeOfEnderMaxCount(t *testing.T) {
+	if got := (item.EyeOfEnder{}).MaxCount(); got != 16 {
+		t.Fatalf("expected eye of ender max count 16, got %d", got)
+	}
+}
+
 func TestEyeOfEnderUseThrowsSignal(t *testing.T) {
 	finalisePortalItemBlocksOnce.Do(worldFinaliseBlockRegistry)
 
