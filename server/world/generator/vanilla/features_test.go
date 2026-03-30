@@ -137,7 +137,7 @@ func TestFeatureBlockFromStateNormalizesTreeStates(t *testing.T) {
 	}
 }
 
-func TestFeatureBlockFromStateFallsBackForUnsupportedJavaBlocks(t *testing.T) {
+func TestFeatureBlockFromStateResolvesImplementedFeatureBlocks(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
 	g := New(0)
@@ -149,12 +149,12 @@ func TestFeatureBlockFromStateFallsBackForUnsupportedJavaBlocks(t *testing.T) {
 		{
 			name:       "bamboo",
 			state:      gen.BlockState{Name: "minecraft:bamboo"},
-			expectType: block.SugarCane{},
+			expectType: block.Bamboo{},
 		},
 		{
 			name:       "rooted_dirt",
 			state:      gen.BlockState{Name: "minecraft:rooted_dirt"},
-			expectType: block.Dirt{},
+			expectType: block.RootedDirt{},
 		},
 		{
 			name: "leaf_litter",
@@ -165,7 +165,12 @@ func TestFeatureBlockFromStateFallsBackForUnsupportedJavaBlocks(t *testing.T) {
 					"segment_amount": "4",
 				},
 			},
-			expectType: block.ShortGrass{},
+			expectType: block.LeafLitter{},
+		},
+		{
+			name:       "pale_moss_block",
+			state:      gen.BlockState{Name: "minecraft:pale_moss_block"},
+			expectType: block.PaleMossBlock{},
 		},
 		{
 			name: "big_dripleaf",
@@ -177,7 +182,32 @@ func TestFeatureBlockFromStateFallsBackForUnsupportedJavaBlocks(t *testing.T) {
 					"waterlogged": "false",
 				},
 			},
-			expectType: block.SugarCane{},
+			expectType: block.BigDripleaf{},
+		},
+		{
+			name: "small_dripleaf",
+			state: gen.BlockState{
+				Name: "minecraft:small_dripleaf",
+				Properties: map[string]string{
+					"facing":      "east",
+					"half":        "lower",
+					"waterlogged": "false",
+				},
+			},
+			expectType: block.SmallDripleaf{},
+		},
+		{
+			name: "mangrove_propagule",
+			state: gen.BlockState{
+				Name: "minecraft:mangrove_propagule",
+				Properties: map[string]string{
+					"age":         "4",
+					"hanging":     "true",
+					"stage":       "0",
+					"waterlogged": "false",
+				},
+			},
+			expectType: block.MangrovePropagule{},
 		},
 	}
 
@@ -194,24 +224,159 @@ func TestFeatureBlockFromStateFallsBackForUnsupportedJavaBlocks(t *testing.T) {
 	}
 }
 
-func TestMangrovePropaguleSurvivesOnMud(t *testing.T) {
+func TestFeatureBlockNameNormalizesImplementedBedrockStateNames(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	c.SetBlock(1, 1, 1, 0, world.BlockRuntimeID(block.RootedDirt{}))
+	c.SetBlock(2, 1, 2, 0, world.BlockRuntimeID(block.SmallDripleaf{Facing: cube.East}))
+	c.SetBlock(3, 1, 3, 0, world.BlockRuntimeID(block.BigDripleaf{Facing: cube.South}))
+	c.SetBlock(4, 1, 4, 0, world.BlockRuntimeID(block.BigDripleaf{Facing: cube.South, Head: true}))
+
+	if got := g.blockNameAt(c, cube.Pos{1, 1, 1}); got != "rooted_dirt" {
+		t.Fatalf("expected rooted dirt block name, got %q", got)
+	}
+	if got := g.blockNameAt(c, cube.Pos{2, 1, 2}); got != "small_dripleaf" {
+		t.Fatalf("expected small dripleaf block name, got %q", got)
+	}
+	if got := g.blockNameAt(c, cube.Pos{3, 1, 3}); got != "big_dripleaf_stem" {
+		t.Fatalf("expected big dripleaf stem name, got %q", got)
+	}
+	if got := g.blockNameAt(c, cube.Pos{4, 1, 4}); got != "big_dripleaf" {
+		t.Fatalf("expected big dripleaf name, got %q", got)
+	}
+}
+
+func TestFeatureBlockTagMatchesJavaSupportTags(t *testing.T) {
+	if !featureBlockTagMatches("podzol", "substrate_overworld") {
+		t.Fatal("expected substrate_overworld to include podzol")
+	}
+	if !featureBlockTagMatches("muddy_mangrove_roots", "substrate_overworld") {
+		t.Fatal("expected substrate_overworld to include muddy mangrove roots")
+	}
+	if !featureBlockTagMatches("coarse_dirt", "supports_big_dripleaf") {
+		t.Fatal("expected supports_big_dripleaf to include coarse dirt")
+	}
+	if !featureBlockTagMatches("red_sand", "azalea_grows_on") {
+		t.Fatal("expected azalea_grows_on to include red sand")
+	}
+	if !featureBlockTagMatches("terracotta", "azalea_grows_on") || !featureBlockTagMatches("white_terracotta", "azalea_grows_on") {
+		t.Fatal("expected azalea_grows_on to include terracotta variants")
+	}
+	if !featureBlockTagMatches("moss_carpet", "mangrove_roots_can_grow_through") {
+		t.Fatal("expected mangrove_roots_can_grow_through to include moss carpet")
+	}
+	if !featureBlockTagMatches("mangrove_log", "mangrove_logs_can_grow_through") {
+		t.Fatal("expected mangrove_logs_can_grow_through to include mangrove logs")
+	}
+	if featureBlockTagMatches("air", "mangrove_logs_can_grow_through") {
+		t.Fatal("expected mangrove_logs_can_grow_through to reject air")
+	}
+	if !featureBlockTagMatches("cave_vines", "moss_replaceable") {
+		t.Fatal("expected moss_replaceable to include cave vines")
+	}
+	if !featureBlockTagMatches("gravel", "azalea_root_replaceable") {
+		t.Fatal("expected azalea_root_replaceable to include gravel")
+	}
+	if !featureBlockTagMatches("dandelion", "replaceable_by_trees") {
+		t.Fatal("expected replaceable_by_trees to include small flowers")
+	}
+	if featureBlockTagMatches("red_mushroom", "replaceable_by_trees") {
+		t.Fatal("expected replaceable_by_trees to reject mushrooms")
+	}
+	if featureBlockTagMatches("snow", "replaceable_by_trees") {
+		t.Fatal("expected replaceable_by_trees to reject snow layers")
+	}
+}
+
+func TestMangrovePropaguleSurvivesOnMudAndClay(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	for _, tc := range []struct {
+		name string
+		base world.Block
+		pos  cube.Pos
+	}{
+		{name: "mud", base: block.Mud{}, pos: cube.Pos{8, 1, 8}},
+		{name: "clay", base: block.Clay{}, pos: cube.Pos{9, 1, 9}},
+	} {
+		c := chunk.New(g.airRID, cube.Range{-64, 319})
+		c.SetBlock(uint8(tc.pos[0]), 0, uint8(tc.pos[2]), 0, world.BlockRuntimeID(tc.base))
+
+		ok := g.canBlockStateSurvive(c, tc.pos, gen.BlockState{
+			Name: "minecraft:mangrove_propagule",
+			Properties: map[string]string{
+				"age":         "0",
+				"hanging":     "false",
+				"stage":       "0",
+				"waterlogged": "false",
+			},
+		}, nil, c.Range().Min(), c.Range().Max())
+		if !ok {
+			t.Fatalf("expected mangrove propagule to survive on %s", tc.name)
+		}
+	}
+}
+
+func TestAzaleaSurvivesOnMud(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
 	g := New(0)
 	c := chunk.New(g.airRID, cube.Range{-64, 319})
 	c.SetBlock(8, 0, 8, 0, world.BlockRuntimeID(block.Mud{}))
 
-	ok := g.canBlockStateSurvive(c, cube.Pos{8, 1, 8}, gen.BlockState{
-		Name: "minecraft:mangrove_propagule",
+	if !g.canBlockStateSurvive(c, cube.Pos{8, 1, 8}, gen.BlockState{Name: "minecraft:azalea"}, nil, c.Range().Min(), c.Range().Max()) {
+		t.Fatal("expected azalea to survive on mud")
+	}
+}
+
+func TestDripleafSurvivalMatchesJavaSupportTags(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	c.SetBlock(4, 0, 4, 0, world.BlockRuntimeID(block.MossBlock{}))
+	c.SetBlock(5, 0, 5, 0, world.BlockRuntimeID(block.Stone{}))
+	c.SetBlock(6, 0, 6, 0, world.BlockRuntimeID(block.Farmland{}))
+	c.SetBlock(7, 0, 7, 0, world.BlockRuntimeID(block.Stone{}))
+
+	if !g.canBlockStateSurvive(c, cube.Pos{4, 1, 4}, gen.BlockState{
+		Name: "minecraft:small_dripleaf",
 		Properties: map[string]string{
-			"age":         "0",
-			"hanging":     "true",
-			"stage":       "0",
-			"waterlogged": "false",
+			"facing": "north",
+			"half":   "lower",
 		},
-	}, nil, c.Range().Min(), c.Range().Max())
-	if !ok {
-		t.Fatal("expected mangrove propagule to survive on mud")
+	}, nil, c.Range().Min(), c.Range().Max()) {
+		t.Fatal("expected small dripleaf to survive on moss block")
+	}
+	if g.canBlockStateSurvive(c, cube.Pos{5, 1, 5}, gen.BlockState{
+		Name: "minecraft:small_dripleaf",
+		Properties: map[string]string{
+			"facing": "north",
+			"half":   "lower",
+		},
+	}, nil, c.Range().Min(), c.Range().Max()) {
+		t.Fatal("expected small dripleaf to reject unsupported stone")
+	}
+	if !g.canBlockStateSurvive(c, cube.Pos{6, 1, 6}, gen.BlockState{
+		Name: "minecraft:big_dripleaf",
+		Properties: map[string]string{
+			"facing": "north",
+			"tilt":   "none",
+		},
+	}, nil, c.Range().Min(), c.Range().Max()) {
+		t.Fatal("expected big dripleaf to survive on farmland")
+	}
+	if g.canBlockStateSurvive(c, cube.Pos{7, 1, 7}, gen.BlockState{
+		Name: "minecraft:big_dripleaf",
+		Properties: map[string]string{
+			"facing": "north",
+			"tilt":   "none",
+		},
+	}, nil, c.Range().Min(), c.Range().Max()) {
+		t.Fatal("expected big dripleaf to reject unsupported stone")
 	}
 }
 
@@ -960,7 +1125,7 @@ func TestGenerateChunkAtSpawnHintPlacesTrees(t *testing.T) {
 	}
 }
 
-func TestExecuteConfiguredBambooPlacesStalks(t *testing.T) {
+func TestExecuteConfiguredBambooPlacesBamboo(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
 	g := New(0)
@@ -978,18 +1143,86 @@ func TestExecuteConfiguredBambooPlacesStalks(t *testing.T) {
 	}
 
 	found := false
+	largeLeaves := false
 	for y := 1; y <= c.Range().Max(); y++ {
 		b, ok := world.BlockByRuntimeID(c.Block(8, int16(y), 8, 0))
 		if !ok {
 			continue
 		}
-		if _, ok := b.(block.SugarCane); ok {
+		bamboo, ok := b.(block.Bamboo)
+		if ok {
 			found = true
+			if bamboo.LeafSize == block.BambooLargeLeaves() {
+				largeLeaves = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected bamboo blocks to be present")
+	}
+	if !largeLeaves {
+		t.Fatal("expected bamboo feature to place leafy bamboo top states")
+	}
+}
+
+func TestExecuteConfiguredBambooPodzolizesSubstrateOverworld(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.RootedDirt{}))
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	if !g.executeBamboo(c, cube.Pos{8, 1, 8}, gen.BambooConfig{Probability: 1}, 0, 0, c.Range().Min(), c.Range().Max(), &rng) {
+		t.Fatal("expected bamboo feature to place stalks")
+	}
+
+	found := false
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			b, ok := world.BlockByRuntimeID(c.Block(uint8(x), 0, uint8(z), 0))
+			if !ok {
+				continue
+			}
+			if _, ok := b.(block.Podzol); ok {
+				found = true
+				break
+			}
+		}
+		if found {
 			break
 		}
 	}
 	if !found {
-		t.Fatal("expected bamboo fallback stalks to be present")
+		t.Fatal("expected bamboo podzol pass to replace rooted dirt like Java's substrate_overworld tag")
+	}
+}
+
+func TestPlaceFeatureStateSmallDripleafIsAtomic(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	c.SetBlock(8, 0, 8, 0, world.BlockRuntimeID(block.MossBlock{}))
+	c.SetBlock(8, 2, 8, 0, world.BlockRuntimeID(block.Stone{}))
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	ok := g.placeFeatureState(c, cube.Pos{8, 1, 8}, gen.BlockState{
+		Name: "minecraft:small_dripleaf",
+		Properties: map[string]string{
+			"facing": "north",
+			"half":   "lower",
+		},
+	}, &rng, c.Range().Min(), c.Range().Max())
+	if ok {
+		t.Fatal("expected small dripleaf placement to fail when the upper half is blocked")
+	}
+	if c.Block(8, 1, 8, 0) != g.airRID {
+		t.Fatalf("expected failed small dripleaf placement to leave the lower block untouched, got runtime ID %d", c.Block(8, 1, 8, 0))
 	}
 }
 
@@ -1018,8 +1251,7 @@ func TestExecuteConfiguredMossPatchPlacesGround(t *testing.T) {
 			if !ok {
 				continue
 			}
-			name, _ := b.EncodeBlock()
-			if strings.TrimPrefix(name, "minecraft:") == "moss_block" {
+			if _, ok := b.(block.MossBlock); ok {
 				found = true
 				break
 			}

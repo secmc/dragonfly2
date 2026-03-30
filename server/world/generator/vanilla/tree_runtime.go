@@ -385,8 +385,7 @@ func (rt treeRuntime) blockNameAt(pos cube.Pos) string {
 	if !ok {
 		return "air"
 	}
-	name, _ = b.EncodeBlock()
-	name = strings.TrimPrefix(name, "minecraft:")
+	name = featureBlockName(b)
 	rt.g.blockNameCache.Store(rid, name)
 	return name
 }
@@ -1838,7 +1837,13 @@ func (rt *treeRuntime) placeCreakingHeartDecorator(probability float64) {
 			}
 		}
 		if enclosed {
-			_ = rt.setDecorationState(pos, gen.BlockState{Name: "minecraft:creaking_heart", Properties: map[string]string{"natural": "true", "state": "dormant"}})
+			axis := "y"
+			if b, ok := world.BlockByRuntimeID(rt.layerRuntimeID(pos, 0)); ok {
+				if log, ok := b.(block.Log); ok {
+					axis = log.Axis.String()
+				}
+			}
+			_ = rt.setDecorationState(pos, gen.BlockState{Name: "minecraft:creaking_heart", Properties: map[string]string{"axis": axis, "natural": "true", "state": "dormant"}})
 			return
 		}
 	}

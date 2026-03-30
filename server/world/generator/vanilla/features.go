@@ -1130,41 +1130,63 @@ func (g Generator) executeBamboo(c *chunk.Chunk, pos cube.Pos, cfg gen.BambooCon
 	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) || pos[1] <= minY || pos[1] >= maxY {
 		return false
 	}
-	if !g.isSolidInChunk(c, pos.Side(cube.FaceDown), chunkX, chunkZ, minY, maxY) {
+	if c.Block(uint8(pos[0]&15), int16(pos[1]), uint8(pos[2]&15), 0) != g.airRID {
+		return false
+	}
+	belowRID := c.Block(uint8(pos[0]&15), int16(pos[1]-1), uint8(pos[2]&15), 0)
+	belowBlock, _ := world.BlockByRuntimeID(belowRID)
+	if !supportsBambooBlock(belowBlock) {
 		return false
 	}
 
-	height := 5 + int(rng.NextInt(8))
-	state := gen.BlockState{Name: "sugar_cane", Properties: map[string]string{"age": strconv.Itoa(int(rng.NextInt(16)))}}
+	height := 5 + int(rng.NextInt(12))
+	trunk := block.Bamboo{Thickness: block.ThickBamboo()}
 	var placedAny bool
-	for i := 0; i < height && pos[1]+i <= maxY; i++ {
-		candidate := pos.Add(cube.Pos{0, i, 0})
-		rid := c.Block(uint8(candidate[0]&15), int16(candidate[1]), uint8(candidate[2]&15), 0)
+	tipPos := pos
+	for i := 0; i < height && tipPos[1] <= maxY; i++ {
+		rid := c.Block(uint8(tipPos[0]&15), int16(tipPos[1]), uint8(tipPos[2]&15), 0)
 		if rid != g.airRID {
 			break
 		}
-		if g.setBlockStateDirect(c, candidate, state) {
+		if g.setFeatureBlock(c, tipPos, trunk) {
 			placedAny = true
 		}
+		tipPos = tipPos.Side(cube.FaceUp)
 	}
-	if !placedAny || cfg.Probability <= 0 || rng.NextDouble() >= cfg.Probability {
-		return placedAny
+	if !placedAny {
+		return false
+	}
+	placedHeight := tipPos[1] - pos[1]
+	if placedHeight >= 3 && tipPos[1] <= maxY && c.Block(uint8(tipPos[0]&15), int16(tipPos[1]), uint8(tipPos[2]&15), 0) == g.airRID {
+		_ = g.setFeatureBlock(c, tipPos, block.Bamboo{AgeBit: true, LeafSize: block.BambooLargeLeaves(), Thickness: block.ThickBamboo()})
+		_ = g.setFeatureBlock(c, tipPos.Side(cube.FaceDown), block.Bamboo{LeafSize: block.BambooLargeLeaves(), Thickness: block.ThickBamboo()})
+		_ = g.setFeatureBlock(c, tipPos.Side(cube.FaceDown).Side(cube.FaceDown), block.Bamboo{LeafSize: block.BambooSmallLeaves(), Thickness: block.ThickBamboo()})
 	}
 
-	for dx := -2; dx <= 2; dx++ {
-		for dz := -2; dz <= 2; dz++ {
-			if dx == 0 && dz == 0 {
+	if cfg.Probability <= 0 || rng.NextDouble() >= cfg.Probability {
+		return true
+	}
+
+	radius := int(rng.NextInt(4)) + 1
+	for x := pos[0] - radius; x <= pos[0]+radius; x++ {
+		for z := pos[2] - radius; z <= pos[2]+radius; z++ {
+			dx, dz := x-pos[0], z-pos[2]
+			if dx*dx+dz*dz > radius*radius {
 				continue
 			}
-			candidate := pos.Add(cube.Pos{dx, -1, dz})
-			if !g.positionInChunk(candidate, chunkX, chunkZ, minY, maxY) {
+			localX, localZ := x-chunkX*16, z-chunkZ*16
+			if localX < 0 || localX > 15 || localZ < 0 || localZ > 15 {
 				continue
 			}
-			name := g.blockNameAt(c, candidate)
-			if name != "dirt" && name != "grass" {
+			surfaceY := g.heightmapPlacementY(c, localX, localZ, "WORLD_SURFACE", minY, maxY) - 1
+			if surfaceY < minY || surfaceY > maxY {
 				continue
 			}
-			_ = g.setBlockStateDirect(c, candidate, gen.BlockState{Name: "podzol", Properties: map[string]string{"snowy": "false"}})
+			surfacePos := cube.Pos{x, surfaceY, z}
+			if !g.matchesFeatureBlockTag(g.blockNameAt(c, surfacePos), "beneath_bamboo_podzol_replaceable") {
+				continue
+			}
+			_ = g.setBlockStateDirect(c, surfacePos, gen.BlockState{Name: "podzol", Properties: map[string]string{"snowy": "false"}})
 		}
 	}
 	return true
@@ -2400,19 +2422,38 @@ func (g Generator) placeFeatureState(c *chunk.Chunk, pos cube.Pos, state gen.Blo
 		return false
 	}
 
-	g.setFeatureBlock(c, pos, featureBlock)
-
-	if tall, ok := featureBlock.(block.DoubleTallGrass); ok && !tall.UpperPart {
-		upperPos := pos.Side(cube.FaceUp)
+	var upperPos cube.Pos
+	var upperFeatureBlock world.Block
+	var hasUpperFeatureBlock bool
+	switch featureBlock := featureBlock.(type) {
+	case block.DoubleTallGrass:
+		if !featureBlock.UpperPart {
+			hasUpperFeatureBlock = true
+			upperPos = pos.Side(cube.FaceUp)
+			upperFeatureBlock = block.DoubleTallGrass{Type: featureBlock.Type, UpperPart: true}
+		}
+	case block.SmallDripleaf:
+		if !featureBlock.Upper {
+			hasUpperFeatureBlock = true
+			upperPos = pos.Side(cube.FaceUp)
+			upperFeatureBlock = block.SmallDripleaf{Upper: true, Facing: featureBlock.Facing}
+		}
+	}
+	if hasUpperFeatureBlock {
 		if upperPos[1] > maxY {
 			return false
 		}
 		upperRID := c.Block(uint8(upperPos[0]&15), int16(upperPos[1]), uint8(upperPos[2]&15), 0)
 		upperBlock, _ := world.BlockByRuntimeID(upperRID)
-		if !g.canReplaceFeatureBlock(upperBlock, block.DoubleTallGrass{Type: tall.Type, UpperPart: true}) {
+		if !g.canReplaceFeatureBlock(upperBlock, upperFeatureBlock) {
 			return false
 		}
-		g.setFeatureBlock(c, upperPos, block.DoubleTallGrass{Type: tall.Type, UpperPart: true})
+	}
+
+	g.setFeatureBlock(c, pos, featureBlock)
+
+	if hasUpperFeatureBlock {
+		g.setFeatureBlock(c, upperPos, upperFeatureBlock)
 	}
 
 	return true
@@ -2444,6 +2485,140 @@ func (g Generator) featureBlockFromState(state gen.BlockState, rng *gen.Xoroshir
 			facing = cube.Direction(rng.NextInt(4))
 		}
 		return block.Pumpkin{Facing: facing}, true
+	case "bamboo":
+		leafSize := block.BambooNoLeaves()
+		switch state.Properties["bamboo_leaf_size"] {
+		case "small_leaves":
+			leafSize = block.BambooSmallLeaves()
+		case "large_leaves":
+			leafSize = block.BambooLargeLeaves()
+		}
+		thickness := block.ThinBamboo()
+		if state.Properties["bamboo_stalk_thickness"] == "thick" {
+			thickness = block.ThickBamboo()
+		}
+		return block.Bamboo{
+			AgeBit:    parseStateBool(state.Properties, "age_bit"),
+			LeafSize:  leafSize,
+			Thickness: thickness,
+		}, true
+	case "moss_block":
+		return block.MossBlock{}, true
+	case "rooted_dirt", "dirt_with_roots":
+		return block.RootedDirt{}, true
+	case "mangrove_roots":
+		return block.MangroveRoots{}, true
+	case "leaf_litter":
+		growth := parseStateInt(state.Properties, "growth")
+		if segmentAmount := parseStateInt(state.Properties, "segment_amount"); segmentAmount > 0 {
+			growth = segmentAmount - 1
+		}
+		return block.LeafLitter{
+			Growth: growth,
+			Facing: parseStateDirection(state.Properties, "minecraft:cardinal_direction", "facing"),
+		}, true
+	case "pale_moss_block":
+		return block.PaleMossBlock{}, true
+	case "pale_moss_carpet":
+		sideValue := func(keys ...string) block.PaleMossCarpetSide {
+			for _, key := range keys {
+				switch state.Properties[key] {
+				case "short":
+					return block.PaleMossCarpetShort()
+				case "tall":
+					return block.PaleMossCarpetTall()
+				case "none":
+					return block.PaleMossCarpetNone()
+				}
+			}
+			return block.PaleMossCarpetNone()
+		}
+		upper := parseStateBool(state.Properties, "upper_block_bit")
+		if _, ok := state.Properties["bottom"]; ok {
+			upper = !parseStateBool(state.Properties, "bottom")
+		}
+		return block.PaleMossCarpet{
+			Upper: upper,
+			North: sideValue("pale_moss_carpet_side_north", "north"),
+			East:  sideValue("pale_moss_carpet_side_east", "east"),
+			South: sideValue("pale_moss_carpet_side_south", "south"),
+			West:  sideValue("pale_moss_carpet_side_west", "west"),
+		}, true
+	case "pale_hanging_moss":
+		return block.PaleHangingMoss{Tip: parseStateBool(state.Properties, "tip")}, true
+	case "creaking_heart":
+		axis := cube.Y
+		switch state.Properties["pillar_axis"] {
+		case "x":
+			axis = cube.X
+		case "z":
+			axis = cube.Z
+		}
+		if axis == cube.Y {
+			switch state.Properties["axis"] {
+			case "x":
+				axis = cube.X
+			case "z":
+				axis = cube.Z
+			}
+		}
+		heartState := block.UprootedCreakingHeart()
+		switch firstNonEmpty(state.Properties["creaking_heart_state"], state.Properties["state"]) {
+		case "dormant":
+			heartState = block.DormantCreakingHeart()
+		case "awake":
+			heartState = block.AwakeCreakingHeart()
+		}
+		return block.CreakingHeart{
+			Axis:    axis,
+			Natural: parseStateBool(state.Properties, "natural"),
+			State:   heartState,
+		}, true
+	case "mangrove_propagule":
+		stage := parseStateInt(state.Properties, "propagule_stage")
+		if _, ok := state.Properties["age"]; ok {
+			stage = parseStateInt(state.Properties, "age")
+		} else if _, ok := state.Properties["stage"]; ok {
+			stage = parseStateInt(state.Properties, "stage")
+		}
+		return block.MangrovePropagule{
+			Hanging: parseStateBool(state.Properties, "hanging"),
+			Stage:   max(0, min(4, stage)),
+		}, true
+	case "azalea":
+		return block.Azalea{}, true
+	case "flowering_azalea":
+		return block.Azalea{Flowering: true}, true
+	case "big_dripleaf", "big_dripleaf_stem":
+		tilt := block.DripleafTiltNone()
+		switch firstNonEmpty(state.Properties["big_dripleaf_tilt"], state.Properties["tilt"]) {
+		case "unstable":
+			tilt = block.DripleafTiltUnstable()
+		case "partial_tilt":
+			tilt = block.DripleafTiltPartial()
+		case "full_tilt":
+			tilt = block.DripleafTiltFull()
+		}
+		head := state.Name != "big_dripleaf_stem"
+		if _, ok := state.Properties["big_dripleaf_head"]; ok {
+			head = parseStateBool(state.Properties, "big_dripleaf_head")
+		}
+		return block.BigDripleaf{
+			Head:   head,
+			Tilt:   tilt,
+			Facing: parseStateDirection(state.Properties, "minecraft:cardinal_direction", "facing"),
+		}, true
+	case "small_dripleaf", "small_dripleaf_block":
+		upper := parseStateBool(state.Properties, "upper_block_bit")
+		if state.Properties["half"] == "upper" {
+			upper = true
+		}
+		return block.SmallDripleaf{
+			Upper:  upper,
+			Facing: parseStateDirection(state.Properties, "minecraft:cardinal_direction", "facing"),
+		}, true
+	case "hanging_roots":
+		return block.HangingRoots{}, true
 	}
 
 	props := featureBlockProperties(state.Properties)
@@ -2455,12 +2630,7 @@ func (g Generator) featureBlockFromState(state gen.BlockState, rng *gen.Xoroshir
 	if ok {
 		return featureBlock, true
 	}
-
-	fallbackState, ok := dragonflyFallbackFeatureState(state)
-	if !ok {
-		return nil, false
-	}
-	return g.featureBlockFromState(fallbackState, rng)
+	return nil, false
 }
 
 func featureBlockProperties(properties map[string]string) map[string]any {
@@ -2496,6 +2666,52 @@ func parseStateInt(properties map[string]string, key string) int {
 	}
 	n, _ := strconv.Atoi(value)
 	return n
+}
+
+func parseStateBool(properties map[string]string, keys ...string) bool {
+	if properties == nil {
+		return false
+	}
+	for _, key := range keys {
+		value, ok := properties[key]
+		if !ok {
+			continue
+		}
+		return value == "true" || value == "1"
+	}
+	return false
+}
+
+func parseStateDirection(properties map[string]string, keys ...string) cube.Direction {
+	if properties == nil {
+		return cube.North
+	}
+	for _, key := range keys {
+		value, ok := properties[key]
+		if !ok {
+			continue
+		}
+		switch value {
+		case "south":
+			return cube.South
+		case "west":
+			return cube.West
+		case "east":
+			return cube.East
+		default:
+			return cube.North
+		}
+	}
+	return cube.North
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func normalizeFeatureState(state gen.BlockState) gen.BlockState {
@@ -2595,53 +2811,6 @@ func normalizeFeatureStateName(name string) string {
 	}
 }
 
-func dragonflyFallbackFeatureState(state gen.BlockState) (gen.BlockState, bool) {
-	name := strings.TrimPrefix(state.Name, "minecraft:")
-	switch name {
-	case "bamboo":
-		// TODO: Place real bamboo when Dragonfly exposes minecraft:bamboo.
-		return gen.BlockState{Name: "sugar_cane"}, true
-	case "rooted_dirt":
-		// TODO: Place real rooted dirt when Dragonfly exposes minecraft:rooted_dirt.
-		return gen.BlockState{Name: "dirt"}, true
-	case "mangrove_roots":
-		// TODO: Place real mangrove roots when Dragonfly exposes minecraft:mangrove_roots.
-		return gen.BlockState{Name: "muddy_mangrove_roots", Properties: map[string]string{"axis": "y"}}, true
-	case "leaf_litter":
-		// TODO: Place real leaf litter when Dragonfly exposes minecraft:leaf_litter.
-		return gen.BlockState{Name: "short_grass"}, true
-	case "pale_moss_block":
-		// TODO: Place real pale moss blocks when Dragonfly exposes minecraft:pale_moss_block.
-		return gen.BlockState{Name: "moss_block"}, true
-	case "pale_moss_carpet":
-		// TODO: Place real pale moss carpets when Dragonfly exposes minecraft:pale_moss_carpet.
-		return gen.BlockState{Name: "moss_carpet"}, true
-	case "pale_hanging_moss":
-		// TODO: Place real pale hanging moss when Dragonfly exposes minecraft:pale_hanging_moss.
-		return gen.BlockState{Name: "moss_carpet"}, true
-	case "creaking_heart":
-		// TODO: Place real creaking hearts when Dragonfly exposes minecraft:creaking_heart.
-		return gen.BlockState{Name: "pale_oak_log", Properties: map[string]string{"axis": "y"}}, true
-	case "mangrove_propagule":
-		// TODO: Place real mangrove propagules when Dragonfly exposes minecraft:mangrove_propagule.
-		return gen.BlockState{Name: "oak_sapling"}, true
-	case "azalea":
-		// TODO: Place real azalea shrubs when Dragonfly exposes minecraft:azalea.
-		return gen.BlockState{Name: "oak_sapling"}, true
-	case "flowering_azalea":
-		// TODO: Place real flowering azalea shrubs when Dragonfly exposes minecraft:flowering_azalea.
-		return gen.BlockState{Name: "oak_sapling"}, true
-	case "big_dripleaf", "big_dripleaf_stem":
-		// TODO: Place real big dripleaf blocks when Dragonfly exposes minecraft:big_dripleaf.
-		return gen.BlockState{Name: "sugar_cane"}, true
-	case "small_dripleaf":
-		// TODO: Place real small dripleaf blocks when Dragonfly exposes minecraft:small_dripleaf.
-		return gen.BlockState{Name: "short_grass"}, true
-	default:
-		return state, false
-	}
-}
-
 func renameFeatureProperty(properties map[string]string, from, to string) {
 	value, ok := properties[from]
 	if !ok {
@@ -2654,19 +2823,45 @@ func renameFeatureProperty(properties map[string]string, from, to string) {
 }
 
 func (g Generator) blockEncodedName(b world.Block) string {
-	name, _ := b.EncodeBlock()
-	return strings.TrimPrefix(name, "minecraft:")
+	return featureBlockName(b)
+}
+
+func featureBlockName(b world.Block) string {
+	switch b := b.(type) {
+	case block.Grass:
+		return "grass"
+	case block.RootedDirt:
+		return "rooted_dirt"
+	case block.SmallDripleaf:
+		return "small_dripleaf"
+	case block.BigDripleaf:
+		if !b.Head {
+			return "big_dripleaf_stem"
+		}
+		return "big_dripleaf"
+	default:
+		name, _ := b.EncodeBlock()
+		return strings.TrimPrefix(name, "minecraft:")
+	}
 }
 
 func (g Generator) canSaplingSurviveOn(belowBlock world.Block, stateName string) bool {
-	switch belowBlock.(type) {
-	case block.Dirt, block.Grass, block.Podzol, block.Farmland:
-		return true
-	case block.Mud, block.MuddyMangroveRoots:
-		return stateName == "mangrove_propagule"
-	default:
+	if belowBlock == nil {
 		return false
 	}
+	blockName := featureBlockName(belowBlock)
+	switch stateName {
+	case "azalea", "flowering_azalea":
+		return g.matchesFeatureBlockTag(blockName, "supports_azalea")
+	case "mangrove_propagule":
+		return g.matchesFeatureBlockTag(blockName, "supports_mangrove_propagule")
+	default:
+		return slices.Contains([]string{"dirt", "coarse_dirt", "grass", "podzol", "farmland"}, blockName)
+	}
+}
+
+func supportsBambooBlock(b world.Block) bool {
+	return matchesFeatureSupportBlockTag(b, "supports_bamboo")
 }
 
 func isFreezingBiomeKey(biomeKey string) bool {
@@ -2754,9 +2949,11 @@ func (g Generator) canFeatureBlockSurvive(c *chunk.Chunk, pos cube.Pos, featureB
 	belowRID := c.Block(uint8(pos[0]&15), int16(pos[1]-1), uint8(pos[2]&15), 0)
 	belowBlock, _ := world.BlockByRuntimeID(belowRID)
 	switch featureBlock := featureBlock.(type) {
-	case block.ShortGrass, block.DoubleTallGrass, block.Flower:
+	case block.ShortGrass, block.DoubleTallGrass, block.Flower, block.Azalea:
 		soil, ok := belowBlock.(block.Soil)
 		return ok && soil.SoilFor(featureBlock)
+	case block.Bamboo:
+		return supportsBambooBlock(belowBlock)
 	case block.Fungus:
 		return supportsNetherFloraBlock(belowBlock)
 	case block.Roots:
@@ -2812,9 +3009,34 @@ func (g Generator) canFeatureBlockSurvive(c *chunk.Chunk, pos cube.Pos, featureB
 		return g.isSolidRID(belowRID)
 	case block.Pumpkin:
 		return belowRID != g.airRID && belowRID != g.waterRID && belowRID != g.lavaRID
+	case block.LeafLitter, block.PaleMossCarpet:
+		return belowRID != g.airRID && belowRID != g.waterRID && belowRID != g.lavaRID
+	case block.HangingRoots, block.PaleHangingMoss:
+		if pos[1] >= maxY {
+			return false
+		}
+		aboveRID := c.Block(uint8(pos[0]&15), int16(pos[1]+1), uint8(pos[2]&15), 0)
+		return g.isSolidRID(aboveRID)
+	case block.SmallDripleaf:
+		if featureBlock.Upper {
+			return false
+		}
+		return matchesFeatureSupportBlockTag(belowBlock, "supports_small_dripleaf")
+	case block.BigDripleaf:
+		if _, ok := belowBlock.(block.BigDripleaf); ok {
+			return true
+		}
+		return matchesFeatureSupportBlockTag(belowBlock, "supports_big_dripleaf")
 	default:
 		return false
 	}
+}
+
+func matchesFeatureSupportBlockTag(b world.Block, tag string) bool {
+	if b == nil {
+		return false
+	}
+	return featureBlockTagMatches(featureBlockName(b), tag)
 }
 
 func (g Generator) testBlockPredicate(c *chunk.Chunk, pos cube.Pos, predicate gen.BlockPredicate, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
@@ -2920,8 +3142,7 @@ func (g Generator) blockNameAt(c *chunk.Chunk, pos cube.Pos) string {
 	if !ok {
 		return "air"
 	}
-	name, _ := featureBlock.EncodeBlock()
-	name = strings.TrimPrefix(name, "minecraft:")
+	name := featureBlockName(featureBlock)
 	g.blockNameCache.Store(rid, name)
 	return name
 }
@@ -3006,28 +3227,116 @@ func supportsChorusBlock(b world.Block) bool {
 }
 
 func (g Generator) matchesFeatureBlockTag(blockName, tag string) bool {
+	return featureBlockTagMatches(blockName, tag)
+}
+
+func featureBlockTagMatches(blockName, tag string) bool {
 	tag = normalizeFeatureTag(tag)
 	switch tag {
+	case "dirt":
+		return slices.Contains([]string{"dirt", "coarse_dirt", "rooted_dirt"}, blockName)
+	case "mud":
+		return slices.Contains([]string{"mud", "muddy_mangrove_roots"}, blockName)
+	case "moss_blocks":
+		return slices.Contains([]string{"moss_block", "pale_moss_block"}, blockName)
+	case "grass_blocks":
+		return slices.Contains([]string{"grass", "podzol", "mycelium"}, blockName)
+	case "sand":
+		return slices.Contains([]string{"sand", "red_sand", "suspicious_sand"}, blockName)
+	case "terracotta":
+		return blockName == "terracotta" || strings.HasSuffix(blockName, "_terracotta")
+	case "base_stone_overworld":
+		return slices.Contains([]string{"stone", "granite", "diorite", "andesite", "tuff", "deepslate"}, blockName)
+	case "cave_vines":
+		return blockName == "cave_vines" || blockName == "cave_vines_plant"
+	case "small_flowers":
+		return slices.Contains([]string{
+			"dandelion",
+			"open_eyeblossom",
+			"poppy",
+			"blue_orchid",
+			"allium",
+			"azure_bluet",
+			"red_tulip",
+			"orange_tulip",
+			"white_tulip",
+			"pink_tulip",
+			"oxeye_daisy",
+			"cornflower",
+			"lily_of_the_valley",
+			"wither_rose",
+			"torchflower",
+			"closed_eyeblossom",
+			"golden_dandelion",
+		}, blockName)
 	case "replaceable_by_trees":
 		switch blockName {
-		case "air", "pale_moss_carpet", "short_grass", "fern", "dead_bush", "vine", "glow_lichen", "sunflower", "lilac", "rose_bush", "peony", "tall_grass", "large_fern", "hanging_roots", "pitcher_plant", "water", "seagrass", "tall_seagrass", "bush", "firefly_bush", "warped_roots", "nether_sprouts", "crimson_roots", "leaf_litter", "short_dry_grass", "tall_dry_grass", "waterlily", "snow":
+		case "pale_moss_carpet", "short_grass", "fern", "dead_bush", "vine", "glow_lichen", "sunflower", "lilac", "rose_bush", "peony", "tall_grass", "large_fern", "hanging_roots", "pitcher_plant", "water", "seagrass", "tall_seagrass", "bush", "firefly_bush", "warped_roots", "nether_sprouts", "crimson_roots", "leaf_litter", "short_dry_grass", "tall_dry_grass":
 			return true
 		}
-		return strings.HasSuffix(blockName, "_leaves") || strings.HasSuffix(blockName, "_mushroom") || strings.Contains(blockName, "flower")
+		return strings.HasSuffix(blockName, "_leaves") || featureBlockTagMatches(blockName, "small_flowers")
+	case "substrate_overworld":
+		return featureBlockTagMatches(blockName, "dirt") ||
+			featureBlockTagMatches(blockName, "mud") ||
+			featureBlockTagMatches(blockName, "moss_blocks") ||
+			featureBlockTagMatches(blockName, "grass_blocks")
+	case "supports_vegetation":
+		return featureBlockTagMatches(blockName, "substrate_overworld") || blockName == "farmland"
+	case "supports_azalea", "supports_mangrove_propagule":
+		return featureBlockTagMatches(blockName, "supports_vegetation") || blockName == "clay"
+	case "supports_hanging_mangrove_propagule":
+		return blockName == "mangrove_leaves"
+	case "supports_bamboo":
+		return featureBlockTagMatches(blockName, "sand") ||
+			featureBlockTagMatches(blockName, "substrate_overworld") ||
+			slices.Contains([]string{"gravel", "suspicious_gravel", "bamboo", "bamboo_sapling"}, blockName)
+	case "beneath_bamboo_podzol_replaceable":
+		return featureBlockTagMatches(blockName, "substrate_overworld")
+	case "supports_small_dripleaf":
+		return blockName == "clay" || blockName == "moss_block"
+	case "supports_big_dripleaf":
+		return featureBlockTagMatches(blockName, "supports_small_dripleaf") ||
+			featureBlockTagMatches(blockName, "dirt") ||
+			featureBlockTagMatches(blockName, "grass_blocks") ||
+			featureBlockTagMatches(blockName, "mud") ||
+			blockName == "farmland"
 	case "azalea_grows_on":
-		return slices.Contains([]string{"dirt", "grass", "clay", "moss_block", "podzol"}, blockName)
+		return featureBlockTagMatches(blockName, "substrate_overworld") ||
+			featureBlockTagMatches(blockName, "sand") ||
+			blockName == "snow_block" ||
+			blockName == "powder_snow" ||
+			featureBlockTagMatches(blockName, "terracotta")
 	case "moss_replaceable":
-		return slices.Contains([]string{"stone", "granite", "diorite", "andesite", "tuff", "deepslate", "calcite", "dripstone_block", "clay", "dirt", "grass", "podzol", "mud"}, blockName)
+		return featureBlockTagMatches(blockName, "base_stone_overworld") ||
+			featureBlockTagMatches(blockName, "cave_vines") ||
+			featureBlockTagMatches(blockName, "dirt") ||
+			featureBlockTagMatches(blockName, "mud") ||
+			featureBlockTagMatches(blockName, "moss_blocks") ||
+			featureBlockTagMatches(blockName, "grass_blocks")
 	case "lush_ground_replaceable":
-		return slices.Contains([]string{"stone", "granite", "diorite", "andesite", "tuff", "deepslate", "calcite", "dripstone_block", "clay", "dirt", "grass", "podzol", "moss_block"}, blockName)
+		return featureBlockTagMatches(blockName, "moss_replaceable") ||
+			blockName == "clay" ||
+			blockName == "gravel" ||
+			blockName == "sand"
 	case "azalea_root_replaceable":
-		return slices.Contains([]string{"stone", "granite", "diorite", "andesite", "tuff", "deepslate", "calcite", "dripstone_block", "clay", "dirt", "grass", "podzol", "moss_block"}, blockName)
+		return featureBlockTagMatches(blockName, "base_stone_overworld") ||
+			featureBlockTagMatches(blockName, "substrate_overworld") ||
+			featureBlockTagMatches(blockName, "terracotta") ||
+			blockName == "red_sand" ||
+			blockName == "clay" ||
+			blockName == "gravel" ||
+			blockName == "sand" ||
+			blockName == "snow_block" ||
+			blockName == "powder_snow"
 	case "cannot_replace_below_tree_trunk":
-		return slices.Contains([]string{"dirt", "coarse_dirt", "rooted_dirt", "mud", "muddy_mangrove_roots", "moss_block", "pale_moss_block", "podzol"}, blockName)
+		return featureBlockTagMatches(blockName, "dirt") ||
+			featureBlockTagMatches(blockName, "mud") ||
+			featureBlockTagMatches(blockName, "moss_blocks") ||
+			blockName == "podzol"
 	case "mangrove_roots_can_grow_through":
-		return blockName == "air" || blockName == "water" || blockName == "mud" || blockName == "short_grass" || blockName == "tall_grass" || strings.HasSuffix(blockName, "_leaves")
+		return slices.Contains([]string{"mud", "muddy_mangrove_roots", "mangrove_roots", "moss_carpet", "vine", "mangrove_propagule", "snow"}, blockName)
 	case "mangrove_logs_can_grow_through":
-		return blockName == "air" || blockName == "water" || blockName == "short_grass" || blockName == "tall_grass" || strings.HasSuffix(blockName, "_leaves")
+		return slices.Contains([]string{"mud", "muddy_mangrove_roots", "mangrove_roots", "mangrove_leaves", "mangrove_log", "mangrove_propagule", "moss_carpet", "vine"}, blockName)
 	default:
 		return false
 	}
