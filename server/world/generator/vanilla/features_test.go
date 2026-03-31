@@ -276,8 +276,23 @@ func TestFeatureBlockTagMatchesJavaSupportTags(t *testing.T) {
 	if !featureBlockTagMatches("cave_vines", "moss_replaceable") {
 		t.Fatal("expected moss_replaceable to include cave vines")
 	}
+	if !featureBlockTagMatches("grass", "forest_rock_can_place_on") || !featureBlockTagMatches("stone", "forest_rock_can_place_on") {
+		t.Fatal("expected forest_rock_can_place_on to include overworld substrate and stone")
+	}
 	if !featureBlockTagMatches("gravel", "azalea_root_replaceable") {
 		t.Fatal("expected azalea_root_replaceable to include gravel")
+	}
+	if !featureBlockTagMatches("grass", "beneath_tree_podzol_replaceable") {
+		t.Fatal("expected beneath_tree_podzol_replaceable to include grass blocks")
+	}
+	if !featureBlockTagMatches("mycelium", "huge_brown_mushroom_can_place_on") || !featureBlockTagMatches("crimson_nylium", "huge_red_mushroom_can_place_on") {
+		t.Fatal("expected huge mushroom placement tags to include vanilla mushroom substrates")
+	}
+	if !featureBlockTagMatches("brown_mushroom_block", "replaceable_by_mushrooms") {
+		t.Fatal("expected replaceable_by_mushrooms to include mushroom blocks")
+	}
+	if !featureBlockTagMatches("ice", "ice_spike_replaceable") || !featureBlockTagMatches("snow_block", "ice_spike_replaceable") {
+		t.Fatal("expected ice_spike_replaceable to include ice and snow blocks")
 	}
 	if !featureBlockTagMatches("dandelion", "replaceable_by_trees") {
 		t.Fatal("expected replaceable_by_trees to include small flowers")
@@ -684,6 +699,231 @@ func TestExecuteConfiguredMegaPinePlacesAlterGroundPodzol(t *testing.T) {
 	}
 	if countBlocksNamed(c, "minecraft:podzol") == 0 {
 		t.Fatal("expected mega_pine alter_ground decorator to place podzol")
+	}
+}
+
+func TestExecuteConfiguredMegaPineAlterGroundRespectsJavaReplaceable(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			rid := world.BlockRuntimeID(block.Stone{})
+			if x >= 6 && x <= 10 && z >= 6 && z <= 10 {
+				rid = world.BlockRuntimeID(block.Grass{})
+			}
+			c.SetBlock(uint8(x), 0, uint8(z), 0, rid)
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeOldGrowthPineTaiga)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "mega_pine"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected mega_pine configured feature to place a tree")
+	}
+
+	outsidePatchPodzol := 0
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			if x >= 6 && x <= 10 && z >= 6 && z <= 10 {
+				continue
+			}
+			b, ok := world.BlockByRuntimeID(c.Block(uint8(x), 0, uint8(z), 0))
+			if !ok {
+				continue
+			}
+			name, _ := b.EncodeBlock()
+			if name == "minecraft:podzol" {
+				outsidePatchPodzol++
+			}
+		}
+	}
+	if outsidePatchPodzol != 0 {
+		t.Fatalf("expected mega_pine alter_ground to avoid non-replaceable stone, got %d outside-patch podzol blocks", outsidePatchPodzol)
+	}
+}
+
+func TestExecuteConfiguredForestRockPlacesMossyCobblestone(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			c.SetBlock(uint8(x), 0, uint8(z), 0, world.BlockRuntimeID(block.Grass{}))
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeOldGrowthSpruceTaiga)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 12, 8}, gen.ConfiguredFeatureRef{Name: "forest_rock"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected forest_rock configured feature to place a blob")
+	}
+	if countBlocksNamed(c, "minecraft:mossy_cobblestone") == 0 {
+		t.Fatal("expected forest_rock configured feature to place mossy cobblestone")
+	}
+}
+
+func TestExecuteConfiguredIceSpikePlacesPackedIce(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			c.SetBlock(uint8(x), 80, uint8(z), 0, world.BlockRuntimeID(block.Snow{}))
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(2)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeIceSpikes)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 96, 8}, gen.ConfiguredFeatureRef{Name: "ice_spike"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected ice_spike configured feature to place packed ice")
+	}
+	if countBlocksNamed(c, "minecraft:packed_ice") == 0 {
+		t.Fatal("expected ice_spike configured feature to place packed ice")
+	}
+}
+
+func TestExecuteConfiguredHugeBrownMushroomPlacesCapAndStem(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	c.SetBlock(8, 0, 8, 0, world.BlockRuntimeID(block.Grass{}))
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeMushroomFields)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "huge_brown_mushroom"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected huge_brown_mushroom configured feature to place")
+	}
+	if countBlocksNamed(c, "minecraft:brown_mushroom_block") == 0 || countBlocksNamed(c, "minecraft:mushroom_stem") == 0 {
+		t.Fatal("expected huge_brown_mushroom to place both cap and stem blocks")
+	}
+}
+
+func TestExecuteConfiguredMushroomIslandVegetationCanPlaceHugeMushroom(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	for seed := int64(1); seed <= 16; seed++ {
+		g := New(0)
+		c := chunk.New(g.airRID, cube.Range{-64, 319})
+		c.SetBlock(8, 0, 8, 0, world.BlockRuntimeID(block.Grass{}))
+
+		rng := gen.NewXoroshiro128FromSeed(seed)
+		biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeMushroomFields)
+		if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 1, 8}, gen.ConfiguredFeatureRef{Name: "mushroom_island_vegetation"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+			continue
+		}
+		if countBlocksNamed(c, "minecraft:brown_mushroom_block")+countBlocksNamed(c, "minecraft:red_mushroom_block") > 0 {
+			return
+		}
+	}
+	t.Fatal("expected mushroom_island_vegetation to place a huge mushroom for at least one deterministic seed")
+}
+
+func TestExecuteConfiguredDesertWellPlacesSandstoneAndWater(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			for y := 60; y <= 62; y++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, world.BlockRuntimeID(block.Sand{}))
+			}
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeDesert)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 80, 8}, gen.ConfiguredFeatureRef{Name: "desert_well"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected desert_well configured feature to place")
+	}
+	if countBlocksNamed(c, "minecraft:sandstone") == 0 {
+		t.Fatal("expected desert well to place sandstone")
+	}
+	centerRID0 := c.Block(8, 62, 8, 0)
+	centerRID1 := c.Block(8, 62, 8, 1)
+	center0, _ := world.BlockByRuntimeID(centerRID0)
+	center1, _ := world.BlockByRuntimeID(centerRID1)
+	name0, _ := center0.EncodeBlock()
+	name1, _ := center1.EncodeBlock()
+	if name0 != "minecraft:water" && name1 != "minecraft:water" && name0 != "minecraft:flowing_water" && name1 != "minecraft:flowing_water" {
+		t.Fatal("expected desert well center to contain water")
+	}
+}
+
+func TestExecuteConfiguredVoidStartPlatformPlacesStonePlatform(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := NewForDimension(0, world.End)
+	c := chunk.New(g.airRID, world.End.Range())
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeTheVoid)
+	rng := gen.NewXoroshiro128FromSeed(1)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{0, 0, 0}, gen.ConfiguredFeatureRef{Name: "void_start_platform"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected void_start_platform configured feature to place")
+	}
+	if countBlocksNamed(c, "minecraft:stone") == 0 {
+		t.Fatal("expected void_start_platform to place stone")
+	}
+	if countBlocksNamed(c, "minecraft:cobblestone") == 0 {
+		t.Fatal("expected void_start_platform to place cobblestone center")
+	}
+}
+
+func TestExecuteConfiguredIcebergPlacesIce(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			for y := seaLevel - 8; y <= seaLevel; y++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, world.BlockRuntimeID(block.Water{Still: true, Depth: 8}))
+			}
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeFrozenOcean)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 0, 8}, gen.ConfiguredFeatureRef{Name: "iceberg_blue"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected iceberg configured feature to place")
+	}
+	if countBlocksNamed(c, "minecraft:blue_ice")+countBlocksNamed(c, "minecraft:packed_ice")+countBlocksNamed(c, "minecraft:snow") == 0 {
+		t.Fatal("expected iceberg configured feature to place iceberg blocks")
+	}
+}
+
+func TestExecuteConfiguredMonsterRoomPlacesSpawnerAndRoomShell(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			for y := 20; y <= 50; y++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, world.BlockRuntimeID(block.Stone{}))
+			}
+		}
+	}
+	// Ensure 1-5 valid openings regardless of xr/zr being 2 or 3.
+	for _, x := range []int{11, 12} {
+		c.SetBlock(uint8(x), 40, 8, 0, g.airRID)
+		c.SetBlock(uint8(x), 41, 8, 0, g.airRID)
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 40, 8}, gen.ConfiguredFeatureRef{Name: "monster_room"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected monster_room configured feature to place")
+	}
+	if countBlocksNamed(c, "minecraft:mob_spawner") == 0 {
+		t.Fatal("expected monster_room to place a mob spawner")
+	}
+	if countBlocksNamed(c, "minecraft:cobblestone")+countBlocksNamed(c, "minecraft:mossy_cobblestone") == 0 {
+		t.Fatal("expected monster_room to place cobblestone shell blocks")
 	}
 }
 

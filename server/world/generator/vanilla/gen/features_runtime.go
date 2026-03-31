@@ -365,6 +365,38 @@ func (f ConfiguredFeatureDef) EndSpike() (EndSpikeConfig, error) {
 	return decodeFeatureConfig[EndSpikeConfig](f, "end_spike")
 }
 
+func (f ConfiguredFeatureDef) BlockBlob() (BlockBlobConfig, error) {
+	return decodeFeatureConfig[BlockBlobConfig](f, "block_blob")
+}
+
+func (f ConfiguredFeatureDef) Spike() (SpikeConfig, error) {
+	return decodeFeatureConfig[SpikeConfig](f, "spike")
+}
+
+func (f ConfiguredFeatureDef) HugeBrownMushroom() (HugeMushroomConfig, error) {
+	return decodeFeatureConfig[HugeMushroomConfig](f, "huge_brown_mushroom")
+}
+
+func (f ConfiguredFeatureDef) HugeRedMushroom() (HugeMushroomConfig, error) {
+	return decodeFeatureConfig[HugeMushroomConfig](f, "huge_red_mushroom")
+}
+
+func (f ConfiguredFeatureDef) DesertWell() (NoneFeatureConfig, error) {
+	return decodeFeatureConfig[NoneFeatureConfig](f, "desert_well")
+}
+
+func (f ConfiguredFeatureDef) VoidStartPlatform() (NoneFeatureConfig, error) {
+	return decodeFeatureConfig[NoneFeatureConfig](f, "void_start_platform")
+}
+
+func (f ConfiguredFeatureDef) Iceberg() (BlockStateFeatureConfig, error) {
+	return decodeFeatureConfig[BlockStateFeatureConfig](f, "iceberg")
+}
+
+func (f ConfiguredFeatureDef) MonsterRoom() (NoneFeatureConfig, error) {
+	return decodeFeatureConfig[NoneFeatureConfig](f, "monster_room")
+}
+
 func (f ConfiguredFeatureDef) EndPlatform() (EndPlatformConfig, error) {
 	return decodeFeatureConfig[EndPlatformConfig](f, "end_platform")
 }
@@ -777,6 +809,30 @@ type EndPlatformConfig struct{}
 type EndGatewayConfig struct {
 	Exact bool      `json:"exact"`
 	Exit  *BlockPos `json:"exit"`
+}
+
+type BlockBlobConfig struct {
+	CanPlaceOn BlockPredicate `json:"can_place_on"`
+	State      BlockState     `json:"state"`
+}
+
+type SpikeConfig struct {
+	CanPlaceOn BlockPredicate `json:"can_place_on"`
+	CanReplace BlockPredicate `json:"can_replace"`
+	State      BlockState     `json:"state"`
+}
+
+type HugeMushroomConfig struct {
+	CanPlaceOn    BlockPredicate `json:"can_place_on"`
+	CapProvider   StateProvider  `json:"cap_provider"`
+	FoliageRadius int            `json:"foliage_radius"`
+	StemProvider  StateProvider  `json:"stem_provider"`
+}
+
+type NoneFeatureConfig struct{}
+
+type BlockStateFeatureConfig struct {
+	State BlockState `json:"state"`
 }
 
 type FeatureDecorator struct {

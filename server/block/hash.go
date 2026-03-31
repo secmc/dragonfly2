@@ -28,6 +28,7 @@ const (
 	hashBookshelf
 	hashBrewingStand
 	hashBricks
+	hashBrownMushroomBlock
 	hashCactus
 	hashCake
 	hashCalcite
@@ -137,6 +138,7 @@ const (
 	hashMud
 	hashMudBricks
 	hashMuddyMangroveRoots
+	hashMushroomStem
 	hashNetherBrickFence
 	hashNetherBricks
 	hashNetherGoldOre
@@ -173,6 +175,7 @@ const (
 	hashRawCopper
 	hashRawGold
 	hashRawIron
+	hashRedMushroomBlock
 	hashReinforcedDeepslate
 	hashResin
 	hashResinBricks
@@ -195,6 +198,7 @@ const (
 	hashSnow
 	hashSoulSand
 	hashSoulSoil
+	hashSpawner
 	hashSponge
 	hashSporeBlossom
 	hashStainedGlass
@@ -322,6 +326,10 @@ func (b BrewingStand) Hash() (uint64, uint64) {
 
 func (Bricks) Hash() (uint64, uint64) {
 	return hashBricks, 0
+}
+
+func (b BrownMushroomBlock) Hash() (uint64, uint64) {
+	return hashBrownMushroomBlock, uint64(b.HugeMushroomBits)
 }
 
 func (c Cactus) Hash() (uint64, uint64) {
@@ -760,6 +768,10 @@ func (m MuddyMangroveRoots) Hash() (uint64, uint64) {
 	return hashMuddyMangroveRoots, uint64(m.Axis)
 }
 
+func (m MushroomStem) Hash() (uint64, uint64) {
+	return hashMushroomStem, uint64(m.HugeMushroomBits)
+}
+
 func (NetherBrickFence) Hash() (uint64, uint64) {
 	return hashNetherBrickFence, 0
 }
@@ -904,6 +916,10 @@ func (RawIron) Hash() (uint64, uint64) {
 	return hashRawIron, 0
 }
 
+func (r RedMushroomBlock) Hash() (uint64, uint64) {
+	return hashRedMushroomBlock, uint64(r.HugeMushroomBits)
+}
+
 func (ReinforcedDeepslate) Hash() (uint64, uint64) {
 	return hashReinforcedDeepslate, 0
 }
@@ -990,6 +1006,10 @@ func (SoulSand) Hash() (uint64, uint64) {
 
 func (SoulSoil) Hash() (uint64, uint64) {
 	return hashSoulSoil, 0
+}
+
+func (Spawner) Hash() (uint64, uint64) {
+	return hashSpawner, 0
 }
 
 func (s Sponge) Hash() (uint64, uint64) {

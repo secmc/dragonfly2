@@ -201,6 +201,12 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 			return false
 		}
 		return g.placeStateProviderBlock(c, pos, cfg.ToPlace, rng, minY, maxY)
+	case "block_blob":
+		cfg, err := feature.BlockBlob()
+		if err != nil {
+			return false
+		}
+		return g.executeBlockBlob(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
 	case "block_column":
 		cfg, err := feature.BlockColumn()
 		if err != nil {
@@ -352,6 +358,34 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 			return false
 		}
 		return g.executeTree(c, pos, cfg, minY, maxY, rng)
+	case "huge_brown_mushroom":
+		cfg, err := feature.HugeBrownMushroom()
+		if err != nil {
+			return false
+		}
+		return g.executeHugeBrownMushroom(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
+	case "huge_red_mushroom":
+		cfg, err := feature.HugeRedMushroom()
+		if err != nil {
+			return false
+		}
+		return g.executeHugeRedMushroom(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
+	case "desert_well":
+		if _, err := feature.DesertWell(); err != nil {
+			return false
+		}
+		return g.executeDesertWell(c, pos, chunkX, chunkZ, minY, maxY, rng)
+	case "iceberg":
+		cfg, err := feature.Iceberg()
+		if err != nil {
+			return false
+		}
+		return g.executeIceberg(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
+	case "monster_room":
+		if _, err := feature.MonsterRoom(); err != nil {
+			return false
+		}
+		return g.executeMonsterRoom(c, pos, chunkX, chunkZ, minY, maxY, rng)
 	case "huge_fungus":
 		cfg, err := feature.HugeFungus()
 		if err != nil {
@@ -418,6 +452,12 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 			return false
 		}
 		return g.executeEndIsland(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
+	case "spike":
+		cfg, err := feature.Spike()
+		if err != nil {
+			return false
+		}
+		return g.executeSpike(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
 	case "end_spike":
 		cfg, err := feature.EndSpike()
 		if err != nil {
@@ -436,6 +476,11 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 			return false
 		}
 		return g.executeEndGateway(c, pos, cfg, chunkX, chunkZ, minY, maxY)
+	case "void_start_platform":
+		if _, err := feature.VoidStartPlatform(); err != nil {
+			return false
+		}
+		return g.executeVoidStartPlatform(c, pos, chunkX, chunkZ, minY, maxY)
 	default:
 		return false
 	}
@@ -1126,6 +1171,55 @@ func (g Generator) executeTree(c *chunk.Chunk, pos cube.Pos, cfg gen.TreeConfig,
 	return g.executeJavaTree(c, pos, cfg, minY, maxY, rng)
 }
 
+func (g Generator) executeBlockBlob(c *chunk.Chunk, pos cube.Pos, cfg gen.BlockBlobConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	origin := pos
+	for origin[1] > minY+3 {
+		below := origin.Side(cube.FaceDown)
+		if g.testBlockPredicate(c, below, cfg.CanPlaceOn, chunkX, chunkZ, minY, maxY, rng) {
+			break
+		}
+		origin = below
+	}
+	if origin[1] <= minY+3 {
+		return false
+	}
+
+	var placedAny bool
+	for range 3 {
+		xr := int(rng.NextInt(2))
+		yr := int(rng.NextInt(2))
+		zr := int(rng.NextInt(2))
+		tr := float64(xr+yr+zr)*(1.0/3.0) + 0.5
+		minPos := origin.Add(cube.Pos{-xr, -yr, -zr})
+		maxPos := origin.Add(cube.Pos{xr, yr, zr})
+		for x := minPos[0]; x <= maxPos[0]; x++ {
+			for y := minPos[1]; y <= maxPos[1]; y++ {
+				for z := minPos[2]; z <= maxPos[2]; z++ {
+					candidate := cube.Pos{x, y, z}
+					dx := float64(candidate[0] - origin[0])
+					dy := float64(candidate[1] - origin[1])
+					dz := float64(candidate[2] - origin[2])
+					if dx*dx+dy*dy+dz*dz > tr*tr {
+						continue
+					}
+					if !g.positionInChunk(candidate, chunkX, chunkZ, minY, maxY) {
+						continue
+					}
+					if g.setBlockStateDirect(c, candidate, cfg.State) {
+						placedAny = true
+					}
+				}
+			}
+		}
+		origin = origin.Add(cube.Pos{
+			-1 + int(rng.NextInt(2)),
+			-int(rng.NextInt(2)),
+			-1 + int(rng.NextInt(2)),
+		})
+	}
+	return placedAny
+}
+
 func (g Generator) executeBamboo(c *chunk.Chunk, pos cube.Pos, cfg gen.BambooConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
 	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) || pos[1] <= minY || pos[1] >= maxY {
 		return false
@@ -1190,6 +1284,339 @@ func (g Generator) executeBamboo(c *chunk.Chunk, pos cube.Pos, cfg gen.BambooCon
 		}
 	}
 	return true
+}
+
+func (g Generator) executeHugeBrownMushroom(c *chunk.Chunk, pos cube.Pos, cfg gen.HugeMushroomConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	return g.executeHugeMushroom(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng, false)
+}
+
+func (g Generator) executeHugeRedMushroom(c *chunk.Chunk, pos cube.Pos, cfg gen.HugeMushroomConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	return g.executeHugeMushroom(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng, true)
+}
+
+func (g Generator) executeMonsterRoom(c *chunk.Chunk, pos cube.Pos, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	xr := int(rng.NextInt(2)) + 2
+	zr := int(rng.NextInt(2)) + 2
+	minX, maxXRoom := -xr-1, xr+1
+	minZ, maxZRoom := -zr-1, zr+1
+	holeCount := 0
+
+	for dx := minX; dx <= maxXRoom; dx++ {
+		for dy := -1; dy <= 4; dy++ {
+			for dz := minZ; dz <= maxZRoom; dz++ {
+				cursor := pos.Add(cube.Pos{dx, dy, dz})
+				if !g.positionInChunk(cursor, chunkX, chunkZ, minY, maxY) {
+					return false
+				}
+				solid := g.isSolidRID(c.Block(uint8(cursor[0]&15), int16(cursor[1]), uint8(cursor[2]&15), 0))
+				if dy == -1 && !solid {
+					return false
+				}
+				if dy == 4 && !solid {
+					return false
+				}
+				if (dx == minX || dx == maxXRoom || dz == minZ || dz == maxZRoom) && dy == 0 {
+					above := cursor.Side(cube.FaceUp)
+					if g.blockNameAt(c, cursor) == "air" && g.positionInChunk(above, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, above) == "air" {
+						holeCount++
+					}
+				}
+			}
+		}
+	}
+	if holeCount < 1 || holeCount > 5 {
+		return false
+	}
+
+	protected := func(p cube.Pos) bool {
+		return g.matchesFeatureBlockTag(g.blockNameAt(c, p), "features_cannot_replace")
+	}
+
+	for dx := minX; dx <= maxXRoom; dx++ {
+		for dy := 3; dy >= -1; dy-- {
+			for dz := minZ; dz <= maxZRoom; dz++ {
+				cursor := pos.Add(cube.Pos{dx, dy, dz})
+				name := g.blockNameAt(c, cursor)
+				if dx == minX || dy == -1 || dz == minZ || dx == maxXRoom || dy == 4 || dz == maxZRoom {
+					below := cursor.Side(cube.FaceDown)
+					if cursor[1] >= minY && g.positionInChunk(below, chunkX, chunkZ, minY, maxY) && !g.isSolidRID(c.Block(uint8(below[0]&15), int16(below[1]), uint8(below[2]&15), 0)) {
+						if !protected(cursor) {
+							_ = g.setBlockStateDirect(c, cursor, gen.BlockState{Name: "air"})
+						}
+					} else if g.isSolidRID(c.Block(uint8(cursor[0]&15), int16(cursor[1]), uint8(cursor[2]&15), 0)) && name != "chest" {
+						if protected(cursor) {
+							continue
+						}
+						if dy == -1 && rng.NextInt(4) != 0 {
+							_ = g.setBlockStateDirect(c, cursor, gen.BlockState{Name: "mossy_cobblestone"})
+						} else {
+							_ = g.setBlockStateDirect(c, cursor, gen.BlockState{Name: "cobblestone"})
+						}
+					}
+				} else if name != "chest" && name != "mob_spawner" && !protected(cursor) {
+					_ = g.setBlockStateDirect(c, cursor, gen.BlockState{Name: "air"})
+				}
+			}
+		}
+	}
+
+	for range 2 {
+		for range 3 {
+			xc := pos[0] + int(rng.NextInt(uint32(xr*2+1))) - xr
+			zc := pos[2] + int(rng.NextInt(uint32(zr*2+1))) - zr
+			chestPos := cube.Pos{xc, pos[1], zc}
+			if !g.positionInChunk(chestPos, chunkX, chunkZ, minY, maxY) || g.blockNameAt(c, chestPos) != "air" {
+				continue
+			}
+			wallCount := 0
+			for _, dir := range []cube.Pos{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}} {
+				side := chestPos.Add(dir)
+				if g.positionInChunk(side, chunkX, chunkZ, minY, maxY) && g.isSolidRID(c.Block(uint8(side[0]&15), int16(side[1]), uint8(side[2]&15), 0)) {
+					wallCount++
+				}
+			}
+			if wallCount == 1 {
+				_ = g.setFeatureBlock(c, chestPos, block.NewChest())
+				break
+			}
+		}
+	}
+
+	if !protected(pos) {
+		_ = g.setFeatureBlock(c, pos, block.Spawner{})
+	}
+	return true
+}
+
+func (g Generator) executeDesertWell(c *chunk.Chunk, pos cube.Pos, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	origin := pos.Side(cube.FaceUp)
+	for g.blockNameAt(c, origin) == "air" && origin[1] > minY+2 {
+		origin = origin.Side(cube.FaceDown)
+	}
+	if g.blockNameAt(c, origin) != "sand" {
+		return false
+	}
+	for ox := -2; ox <= 2; ox++ {
+		for oz := -2; oz <= 2; oz++ {
+			below1 := origin.Add(cube.Pos{ox, -1, oz})
+			below2 := origin.Add(cube.Pos{ox, -2, oz})
+			if g.positionInChunk(below1, chunkX, chunkZ, minY, maxY) && g.positionInChunk(below2, chunkX, chunkZ, minY, maxY) &&
+				g.blockNameAt(c, below1) == "air" && g.blockNameAt(c, below2) == "air" {
+				return false
+			}
+		}
+	}
+
+	sandstone := gen.BlockState{Name: "sandstone"}
+	sand := gen.BlockState{Name: "sand"}
+	for oy := -2; oy <= 0; oy++ {
+		for ox := -2; ox <= 2; ox++ {
+			for oz := -2; oz <= 2; oz++ {
+				_ = g.setBlockStateDirect(c, origin.Add(cube.Pos{ox, oy, oz}), sandstone)
+			}
+		}
+	}
+	stillWater := block.Water{Still: true, Depth: 8}
+	_ = g.setFeatureBlock(c, origin, stillWater)
+	for _, dir := range []cube.Pos{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}} {
+		_ = g.setFeatureBlock(c, origin.Add(dir), stillWater)
+	}
+	sandCenter := origin.Side(cube.FaceDown)
+	_ = g.setBlockStateDirect(c, sandCenter, sand)
+	for _, dir := range []cube.Pos{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}} {
+		_ = g.setBlockStateDirect(c, sandCenter.Add(dir), sand)
+	}
+	for ox := -2; ox <= 2; ox++ {
+		for oz := -2; oz <= 2; oz++ {
+			if ox == -2 || ox == 2 || oz == -2 || oz == 2 {
+				_ = g.setBlockStateDirect(c, origin.Add(cube.Pos{ox, 1, oz}), sandstone)
+			}
+		}
+	}
+	slabBlock := block.Slab{Block: block.Sandstone{}}
+	_ = g.setFeatureBlock(c, origin.Add(cube.Pos{2, 1, 0}), slabBlock)
+	_ = g.setFeatureBlock(c, origin.Add(cube.Pos{-2, 1, 0}), slabBlock)
+	_ = g.setFeatureBlock(c, origin.Add(cube.Pos{0, 1, 2}), slabBlock)
+	_ = g.setFeatureBlock(c, origin.Add(cube.Pos{0, 1, -2}), slabBlock)
+	for ox := -1; ox <= 1; ox++ {
+		for oz := -1; oz <= 1; oz++ {
+			if ox == 0 && oz == 0 {
+				_ = g.setBlockStateDirect(c, origin.Add(cube.Pos{ox, 4, oz}), sandstone)
+			} else {
+				_ = g.setFeatureBlock(c, origin.Add(cube.Pos{ox, 4, oz}), slabBlock)
+			}
+		}
+	}
+	for oy := 1; oy <= 3; oy++ {
+		_ = g.setBlockStateDirect(c, origin.Add(cube.Pos{-1, oy, -1}), sandstone)
+		_ = g.setBlockStateDirect(c, origin.Add(cube.Pos{-1, oy, 1}), sandstone)
+		_ = g.setBlockStateDirect(c, origin.Add(cube.Pos{1, oy, -1}), sandstone)
+		_ = g.setBlockStateDirect(c, origin.Add(cube.Pos{1, oy, 1}), sandstone)
+	}
+	// Bedrock archaeology/block-entity parity is not implemented yet; keep fallback sand instead of suspicious sand.
+	if rng != nil {
+		waterPositions := []cube.Pos{
+			origin,
+			origin.Add(cube.Pos{1, 0, 0}),
+			origin.Add(cube.Pos{-1, 0, 0}),
+			origin.Add(cube.Pos{0, 0, 1}),
+			origin.Add(cube.Pos{0, 0, -1}),
+		}
+		first := waterPositions[int(rng.NextInt(uint32(len(waterPositions))))]
+		second := waterPositions[int(rng.NextInt(uint32(len(waterPositions))))]
+		_ = g.setBlockStateDirect(c, first.Add(cube.Pos{0, -1, 0}), sand)
+		_ = g.setBlockStateDirect(c, second.Add(cube.Pos{0, -2, 0}), sand)
+	}
+	return true
+}
+
+func (g Generator) executeHugeMushroom(c *chunk.Chunk, pos cube.Pos, cfg gen.HugeMushroomConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, red bool) bool {
+	treeHeight := 4 + int(rng.NextInt(3))
+	if rng.NextInt(12) == 0 {
+		treeHeight *= 2
+	}
+	if pos[1] < minY+1 || pos[1]+treeHeight+1 > maxY+1 {
+		return false
+	}
+	if !g.testBlockPredicate(c, pos.Side(cube.FaceDown), cfg.CanPlaceOn, chunkX, chunkZ, minY, maxY, rng) {
+		return false
+	}
+
+	for dy := 0; dy <= treeHeight; dy++ {
+		radius := hugeMushroomRadiusForHeight(treeHeight, cfg.FoliageRadius, dy, red)
+		for dx := -radius; dx <= radius; dx++ {
+			for dz := -radius; dz <= radius; dz++ {
+				candidate := pos.Add(cube.Pos{dx, dy, dz})
+				if !g.positionInChunk(candidate, chunkX, chunkZ, minY, maxY) {
+					return false
+				}
+				name := g.blockNameAt(c, candidate)
+				if name != "air" && !strings.HasSuffix(name, "_leaves") {
+					return false
+				}
+			}
+		}
+	}
+
+	stemState, ok := g.selectState(c, cfg.StemProvider, pos, rng, minY, maxY)
+	if !ok {
+		return false
+	}
+	capState, ok := g.selectState(c, cfg.CapProvider, pos, rng, minY, maxY)
+	if !ok {
+		return false
+	}
+
+	placedAny := false
+	if red {
+		placedAny = g.placeHugeRedMushroomCap(c, pos, treeHeight, cfg.FoliageRadius, capState, chunkX, chunkZ, minY, maxY) || placedAny
+	} else {
+		placedAny = g.placeHugeBrownMushroomCap(c, pos, treeHeight, cfg.FoliageRadius, capState, chunkX, chunkZ, minY, maxY) || placedAny
+	}
+	for dy := 0; dy < treeHeight; dy++ {
+		if g.placeHugeMushroomState(c, pos.Add(cube.Pos{0, dy, 0}), stemState, chunkX, chunkZ, minY, maxY) {
+			placedAny = true
+		}
+	}
+	return placedAny
+}
+
+func hugeMushroomRadiusForHeight(treeHeight, leafRadius, y int, red bool) int {
+	if red {
+		if y < treeHeight && y >= treeHeight-3 {
+			return leafRadius
+		}
+		if y == treeHeight {
+			return leafRadius
+		}
+		return 0
+	}
+	if y <= 3 {
+		return 0
+	}
+	return leafRadius
+}
+
+func (g Generator) placeHugeBrownMushroomCap(c *chunk.Chunk, pos cube.Pos, treeHeight, radius int, state gen.BlockState, chunkX, chunkZ, minY, maxY int) bool {
+	var placedAny bool
+	for dx := -radius; dx <= radius; dx++ {
+		for dz := -radius; dz <= radius; dz++ {
+			minX, maxX := dx == -radius, dx == radius
+			minZ, maxZ := dz == -radius, dz == radius
+			xEdge, zEdge := minX || maxX, minZ || maxZ
+			if xEdge && zEdge {
+				continue
+			}
+			candidate := pos.Add(cube.Pos{dx, treeHeight, dz})
+			props := cloneStateProperties(state.Properties)
+			west := minX || (zEdge && dx == 1-radius)
+			east := maxX || (zEdge && dx == radius-1)
+			north := minZ || (xEdge && dz == 1-radius)
+			south := maxZ || (xEdge && dz == radius-1)
+			props["west"] = strconv.FormatBool(west)
+			props["east"] = strconv.FormatBool(east)
+			props["north"] = strconv.FormatBool(north)
+			props["south"] = strconv.FormatBool(south)
+			if g.placeHugeMushroomState(c, candidate, gen.BlockState{Name: state.Name, Properties: props}, chunkX, chunkZ, minY, maxY) {
+				placedAny = true
+			}
+		}
+	}
+	return placedAny
+}
+
+func (g Generator) placeHugeRedMushroomCap(c *chunk.Chunk, pos cube.Pos, treeHeight, radius int, state gen.BlockState, chunkX, chunkZ, minY, maxY int) bool {
+	var placedAny bool
+	for dy := treeHeight - 3; dy <= treeHeight; dy++ {
+		layerRadius := radius
+		if dy >= treeHeight {
+			layerRadius--
+		}
+		center := radius - 2
+		for dx := -layerRadius; dx <= layerRadius; dx++ {
+			for dz := -layerRadius; dz <= layerRadius; dz++ {
+				minX, maxX := dx == -layerRadius, dx == layerRadius
+				minZ, maxZ := dz == -layerRadius, dz == layerRadius
+				xEdge, zEdge := minX || maxX, minZ || maxZ
+				if dy < treeHeight && xEdge == zEdge {
+					continue
+				}
+				candidate := pos.Add(cube.Pos{dx, dy, dz})
+				props := cloneStateProperties(state.Properties)
+				props["up"] = strconv.FormatBool(dy >= treeHeight-1)
+				props["west"] = strconv.FormatBool(dx < -center)
+				props["east"] = strconv.FormatBool(dx > center)
+				props["north"] = strconv.FormatBool(dz < -center)
+				props["south"] = strconv.FormatBool(dz > center)
+				if g.placeHugeMushroomState(c, candidate, gen.BlockState{Name: state.Name, Properties: props}, chunkX, chunkZ, minY, maxY) {
+					placedAny = true
+				}
+			}
+		}
+	}
+	return placedAny
+}
+
+func cloneStateProperties(props map[string]string) map[string]string {
+	if len(props) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(props))
+	for key, value := range props {
+		out[key] = value
+	}
+	return out
+}
+
+func (g Generator) placeHugeMushroomState(c *chunk.Chunk, pos cube.Pos, state gen.BlockState, chunkX, chunkZ, minY, maxY int) bool {
+	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+		return false
+	}
+	name := g.blockNameAt(c, pos)
+	if name != "air" && !g.matchesFeatureBlockTag(name, "replaceable_by_mushrooms") {
+		return false
+	}
+	return g.setBlockStateDirect(c, pos, state)
 }
 
 func (g Generator) executeVegetationPatch(c *chunk.Chunk, biomes sourceBiomeVolume, pos cube.Pos, cfg gen.VegetationPatchConfig, topFeatureName string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int, waterlogged bool) bool {
@@ -1690,6 +2117,333 @@ func (g Generator) executeEndIsland(c *chunk.Chunk, pos cube.Pos, _ gen.EndIslan
 			}
 		}
 		radius--
+	}
+	return placedAny
+}
+
+func checkerboardDistance(ax, az, bx, bz int) int {
+	return max(abs(ax-bx), abs(az-bz))
+}
+
+func (g Generator) executeVoidStartPlatform(c *chunk.Chunk, pos cube.Pos, chunkX, chunkZ, minY, maxY int) bool {
+	const (
+		platformOffsetX = 8
+		platformOffsetY = 3
+		platformOffsetZ = 8
+		platformRadius  = 16
+	)
+	platformChunkX := floorDiv(platformOffsetX, 16)
+	platformChunkZ := floorDiv(platformOffsetZ, 16)
+	if checkerboardDistance(chunkX, chunkZ, platformChunkX, platformChunkZ) > 1 {
+		return true
+	}
+	y := pos[1] + platformOffsetY
+	if y < minY || y > maxY {
+		return false
+	}
+	platformOrigin := cube.Pos{platformOffsetX, y, platformOffsetZ}
+	placedAny := false
+	for z := chunkZ * 16; z <= chunkZ*16+15; z++ {
+		for x := chunkX * 16; x <= chunkX*16+15; x++ {
+			if checkerboardDistance(platformOrigin[0], platformOrigin[2], x, z) > platformRadius {
+				continue
+			}
+			state := gen.BlockState{Name: "stone"}
+			if x == platformOrigin[0] && z == platformOrigin[2] {
+				state = gen.BlockState{Name: "cobblestone"}
+			}
+			if g.setBlockStateDirect(c, cube.Pos{x, y, z}, state) {
+				placedAny = true
+			}
+		}
+	}
+	return placedAny
+}
+
+func (g Generator) executeIceberg(c *chunk.Chunk, pos cube.Pos, cfg gen.BlockStateFeatureConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	origin := cube.Pos{pos[0], seaLevel, pos[2]}
+	snowOnTop := rng.NextDouble() > 0.7
+	shapeAngle := rng.NextDouble() * 2.0 * math.Pi
+	shapeEllipseA := 11 - int(rng.NextInt(5))
+	shapeEllipseC := 3 + int(rng.NextInt(3))
+	isEllipse := rng.NextDouble() > 0.7
+	overWaterHeight := 3 + int(rng.NextInt(15))
+	if isEllipse {
+		overWaterHeight = 6 + int(rng.NextInt(6))
+	}
+	if !isEllipse && rng.NextDouble() > 0.9 {
+		overWaterHeight += 7 + int(rng.NextInt(19))
+	}
+	underWaterHeight := min(overWaterHeight+int(rng.NextInt(11)), 18)
+	width := min(overWaterHeight+int(rng.NextInt(7))-int(rng.NextInt(5)), 11)
+	a := 11
+	if isEllipse {
+		a = shapeEllipseA
+	}
+
+	placedAny := false
+	for xo := -a; xo < a; xo++ {
+		for zo := -a; zo < a; zo++ {
+			for yOff := 0; yOff < overWaterHeight; yOff++ {
+				radius := icebergHeightDependentRadiusRound(rng, yOff, overWaterHeight, width)
+				if isEllipse {
+					radius = icebergHeightDependentRadiusEllipse(yOff, overWaterHeight, width)
+				}
+				if isEllipse || xo < radius {
+					if g.generateIcebergBlock(c, origin, overWaterHeight, xo, yOff, zo, radius, a, isEllipse, shapeEllipseC, shapeAngle, snowOnTop, cfg.State, chunkX, chunkZ, minY, maxY, rng) {
+						placedAny = true
+					}
+				}
+			}
+		}
+	}
+	g.smoothIceberg(c, origin, width, overWaterHeight, isEllipse, shapeEllipseA, chunkX, chunkZ, minY, maxY)
+	for xo := -a; xo < a; xo++ {
+		for zo := -a; zo < a; zo++ {
+			for yOff := -1; yOff > -underWaterHeight; yOff-- {
+				newA := a
+				if isEllipse {
+					newA = int(math.Ceil(float64(a) * (1.0 - math.Pow(float64(yOff), 2.0)/(float64(underWaterHeight)*8.0))))
+				}
+				radius := icebergHeightDependentRadiusSteep(rng, -yOff, underWaterHeight, width)
+				if xo < radius {
+					if g.generateIcebergBlock(c, origin, underWaterHeight, xo, yOff, zo, radius, newA, isEllipse, shapeEllipseC, shapeAngle, snowOnTop, cfg.State, chunkX, chunkZ, minY, maxY, rng) {
+						placedAny = true
+					}
+				}
+			}
+		}
+	}
+	return placedAny
+}
+
+func icebergHeightDependentRadiusRound(rng *gen.Xoroshiro128, yOff, height, width int) int {
+	k := 3.5 - rng.NextDouble()
+	scale := (1.0 - math.Pow(float64(yOff), 2.0)/(float64(height)*k)) * float64(width)
+	if height > 15+int(rng.NextInt(5)) {
+		tempYOff := yOff
+		if yOff < 3+int(rng.NextInt(6)) {
+			tempYOff = yOff / 2
+		}
+		scale = (1.0 - float64(tempYOff)/(float64(height)*k*0.4)) * float64(width)
+	}
+	return int(math.Ceil(scale / 2.0))
+}
+
+func icebergHeightDependentRadiusEllipse(yOff, height, width int) int {
+	scale := (1.0 - math.Pow(float64(yOff), 2.0)/float64(height)) * float64(width)
+	return int(math.Ceil(scale / 2.0))
+}
+
+func icebergHeightDependentRadiusSteep(rng *gen.Xoroshiro128, yOff, height, width int) int {
+	k := 1.0 + rng.NextDouble()/2.0
+	scale := (1.0 - float64(yOff)/(float64(height)*k)) * float64(width)
+	return int(math.Ceil(scale / 2.0))
+}
+
+func icebergSignedDistanceCircle(xo, zo int, radius int, rng *gen.Xoroshiro128) float64 {
+	off := 10.0 * max(0.2, min(0.8, rng.NextDouble())) / float64(radius)
+	return off + math.Pow(float64(xo), 2.0) + math.Pow(float64(zo), 2.0) - math.Pow(float64(radius), 2.0)
+}
+
+func icebergSignedDistanceEllipse(xo, zo int, a, c int, angle float64) float64 {
+	if a == 0 || c == 0 {
+		return 1
+	}
+	x := (float64(xo)*math.Cos(angle) - float64(zo)*math.Sin(angle)) / float64(a)
+	z := (float64(xo)*math.Sin(angle) + float64(zo)*math.Cos(angle)) / float64(c)
+	return x*x + z*z - 1.0
+}
+
+func icebergEllipseC(yOff, height, shapeEllipseC int) int {
+	c := shapeEllipseC
+	if yOff > 0 && height-yOff <= 3 {
+		c = shapeEllipseC - (4 - (height - yOff))
+	}
+	return c
+}
+
+func (g Generator) generateIcebergBlock(c *chunk.Chunk, origin cube.Pos, height, xo, yOff, zo, radius, a int, isEllipse bool, shapeEllipseC int, shapeAngle float64, snowOnTop bool, mainState gen.BlockState, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	var signedDist float64
+	if isEllipse {
+		signedDist = icebergSignedDistanceEllipse(xo, zo, a, icebergEllipseC(yOff, height, shapeEllipseC), shapeAngle)
+	} else {
+		signedDist = icebergSignedDistanceCircle(xo, zo, radius, rng)
+	}
+	if signedDist >= 0 {
+		return false
+	}
+	pos := origin.Add(cube.Pos{xo, yOff, zo})
+	compareVal := -6.0 - float64(int(rng.NextInt(3)))
+	if isEllipse {
+		compareVal = -0.5
+	}
+	if signedDist > compareVal && rng.NextDouble() > 0.9 {
+		return false
+	}
+	return g.setIcebergBlock(c, pos, height-yOff, height, isEllipse, snowOnTop, mainState, chunkX, chunkZ, minY, maxY, rng)
+}
+
+func (g Generator) setIcebergBlock(c *chunk.Chunk, pos cube.Pos, hDiff, height int, isEllipse, snowOnTop bool, mainState gen.BlockState, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+		return false
+	}
+	name := g.blockNameAt(c, pos)
+	if name != "air" && name != "snow" && name != "packed_ice" && name != "blue_ice" && name != "water" {
+		return false
+	}
+	randomness := !isEllipse || rng.NextDouble() > 0.05
+	divisor := 2
+	if isEllipse {
+		divisor = 3
+	}
+	if snowOnTop && name != "water" && hDiff <= int(rng.NextInt(uint32(max(1, height/divisor))))+int(float64(height)*0.6) && randomness {
+		return g.setBlockStateDirect(c, pos, gen.BlockState{Name: "snow"})
+	}
+	return g.setBlockStateDirect(c, pos, mainState)
+}
+
+func (g Generator) smoothIceberg(c *chunk.Chunk, origin cube.Pos, width, height int, isEllipse bool, shapeEllipseA int, chunkX, chunkZ, minY, maxY int) {
+	a := width / 2
+	if isEllipse {
+		a = shapeEllipseA
+	}
+	for x := -a; x <= a; x++ {
+		for z := -a; z <= a; z++ {
+			for yOff := 0; yOff <= height; yOff++ {
+				pos := origin.Add(cube.Pos{x, yOff, z})
+				if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+					continue
+				}
+				name := g.blockNameAt(c, pos)
+				if name != "packed_ice" && name != "blue_ice" && name != "snow" {
+					continue
+				}
+				below := pos.Side(cube.FaceDown)
+				if g.positionInChunk(below, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, below) == "air" {
+					_ = g.setBlockStateDirect(c, pos, gen.BlockState{Name: "air"})
+					above := pos.Side(cube.FaceUp)
+					if g.positionInChunk(above, chunkX, chunkZ, minY, maxY) {
+						_ = g.setBlockStateDirect(c, above, gen.BlockState{Name: "air"})
+					}
+					continue
+				}
+				if name == "packed_ice" || name == "blue_ice" {
+					counter := 0
+					for _, dir := range []cube.Pos{{-1, 0, 0}, {1, 0, 0}, {0, 0, -1}, {0, 0, 1}} {
+						side := pos.Add(dir)
+						sideName := "air"
+						if g.positionInChunk(side, chunkX, chunkZ, minY, maxY) {
+							sideName = g.blockNameAt(c, side)
+						}
+						if sideName != "packed_ice" && sideName != "blue_ice" && sideName != "snow" {
+							counter++
+						}
+					}
+					if counter >= 3 {
+						_ = g.setBlockStateDirect(c, pos, gen.BlockState{Name: "air"})
+					}
+				}
+			}
+		}
+	}
+}
+
+func (g Generator) executeSpike(c *chunk.Chunk, pos cube.Pos, cfg gen.SpikeConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	origin := pos
+	for g.blockNameAt(c, origin) == "air" && origin[1] > minY+2 {
+		origin = origin.Side(cube.FaceDown)
+	}
+	if !g.testBlockPredicate(c, origin, cfg.CanPlaceOn, chunkX, chunkZ, minY, maxY, rng) {
+		return false
+	}
+
+	origin = origin.Add(cube.Pos{0, int(rng.NextInt(4)), 0})
+	height := 7 + int(rng.NextInt(4))
+	width := height/4 + int(rng.NextInt(2))
+	if width > 1 && rng.NextInt(60) == 0 {
+		origin = origin.Add(cube.Pos{0, 10 + int(rng.NextInt(30)), 0})
+	}
+
+	var placedAny bool
+	for yOff := 0; yOff < height; yOff++ {
+		scale := (1.0 - float64(yOff)/float64(height)) * float64(width)
+		newWidth := int(math.Ceil(scale))
+		for xo := -newWidth; xo <= newWidth; xo++ {
+			dx := math.Abs(float64(xo)) - 0.25
+			for zo := -newWidth; zo <= newWidth; zo++ {
+				dz := math.Abs(float64(zo)) - 0.25
+				if xo != 0 || zo != 0 {
+					if dx*dx+dz*dz > scale*scale {
+						continue
+					}
+					if (xo == -newWidth || xo == newWidth || zo == -newWidth || zo == newWidth) && rng.NextDouble() > 0.75 {
+						continue
+					}
+				}
+
+				positive := origin.Add(cube.Pos{xo, yOff, zo})
+				if g.positionInChunk(positive, chunkX, chunkZ, minY, maxY) {
+					name := g.blockNameAt(c, positive)
+					if name == "air" || g.testBlockPredicate(c, positive, cfg.CanReplace, chunkX, chunkZ, minY, maxY, rng) {
+						if g.setBlockStateDirect(c, positive, cfg.State) {
+							placedAny = true
+						}
+					}
+				}
+				if yOff != 0 && newWidth > 1 {
+					negative := origin.Add(cube.Pos{xo, -yOff, zo})
+					if g.positionInChunk(negative, chunkX, chunkZ, minY, maxY) {
+						name := g.blockNameAt(c, negative)
+						if name == "air" || g.testBlockPredicate(c, negative, cfg.CanReplace, chunkX, chunkZ, minY, maxY, rng) {
+							if g.setBlockStateDirect(c, negative, cfg.State) {
+								placedAny = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	pillarWidth := width - 1
+	if pillarWidth < 0 {
+		pillarWidth = 0
+	} else if pillarWidth > 1 {
+		pillarWidth = 1
+	}
+	for xo := -pillarWidth; xo <= pillarWidth; xo++ {
+		for zo := -pillarWidth; zo <= pillarWidth; zo++ {
+			cursor := origin.Add(cube.Pos{xo, -1, zo})
+			runLength := 50
+			if abs(xo) == 1 && abs(zo) == 1 {
+				runLength = int(rng.NextInt(5))
+			}
+			for cursor[1] > 50 {
+				if !g.positionInChunk(cursor, chunkX, chunkZ, minY, maxY) {
+					cursor = cursor.Side(cube.FaceDown)
+					runLength--
+					if runLength <= 0 {
+						cursor = cursor.Add(cube.Pos{0, -(int(rng.NextInt(5)) + 1), 0})
+						runLength = int(rng.NextInt(5))
+					}
+					continue
+				}
+				name := g.blockNameAt(c, cursor)
+				if name != "air" && !g.testBlockPredicate(c, cursor, cfg.CanReplace, chunkX, chunkZ, minY, maxY, rng) && name != normalizeFeatureStateName(cfg.State.Name) {
+					break
+				}
+				if g.setBlockStateDirect(c, cursor, cfg.State) {
+					placedAny = true
+				}
+				cursor = cursor.Side(cube.FaceDown)
+				runLength--
+				if runLength <= 0 {
+					cursor = cursor.Add(cube.Pos{0, -(int(rng.NextInt(5)) + 1), 0})
+					runLength = int(rng.NextInt(5))
+				}
+			}
+		}
 	}
 	return placedAny
 }
@@ -2619,6 +3373,12 @@ func (g Generator) featureBlockFromState(state gen.BlockState, rng *gen.Xoroshir
 		}, true
 	case "hanging_roots":
 		return block.HangingRoots{}, true
+	case "brown_mushroom_block":
+		return block.BrownMushroomBlock{HugeMushroomBits: hugeMushroomBitsFromState(state.Properties, false)}, true
+	case "red_mushroom_block":
+		return block.RedMushroomBlock{HugeMushroomBits: hugeMushroomBitsFromState(state.Properties, false)}, true
+	case "mushroom_stem":
+		return block.MushroomStem{HugeMushroomBits: hugeMushroomBitsFromState(state.Properties, true)}, true
 	}
 
 	props := featureBlockProperties(state.Properties)
@@ -2712,6 +3472,60 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func hugeMushroomBitsFromState(properties map[string]string, stem bool) int {
+	if properties == nil {
+		if stem {
+			return 10
+		}
+		return 5
+	}
+	if _, ok := properties["huge_mushroom_bits"]; ok {
+		return max(0, min(15, parseStateInt(properties, "huge_mushroom_bits")))
+	}
+	down := parseStateBool(properties, "down")
+	east := parseStateBool(properties, "east")
+	north := parseStateBool(properties, "north")
+	south := parseStateBool(properties, "south")
+	up := parseStateBool(properties, "up")
+	west := parseStateBool(properties, "west")
+	if stem {
+		if !up && !down && east && north && south && west {
+			return 10
+		}
+		if up && down && east && north && south && west {
+			return 15
+		}
+	}
+	if up && east && north && south && west {
+		return 14
+	}
+	switch {
+	case west && north && !east && !south:
+		return 1
+	case north && !east && !south && !west:
+		return 2
+	case north && east && !south && !west:
+		return 3
+	case west && !north && !east && !south:
+		return 4
+	case !north && !east && !south && !west:
+		return 5
+	case east && !north && !south && !west:
+		return 6
+	case south && west && !north && !east:
+		return 7
+	case south && !north && !east && !west:
+		return 8
+	case south && east && !north && !west:
+		return 9
+	default:
+		if stem {
+			return 10
+		}
+		return 0
+	}
 }
 
 func normalizeFeatureState(state gen.BlockState) gen.BlockState {
@@ -3051,7 +3865,12 @@ func (g Generator) testBlockPredicate(c *chunk.Chunk, pos cube.Pos, predicate ge
 			return false
 		}
 		name := g.blockNameAt(c, target)
-		return slices.Contains(cfg.Blocks.Values, name)
+		for _, candidate := range cfg.Blocks.Values {
+			if normalizeFeatureStateName(candidate) == name {
+				return true
+			}
+		}
+		return false
 	case "matching_fluids":
 		cfg, err := predicate.MatchingFluids()
 		if err != nil {
@@ -3275,6 +4094,12 @@ func featureBlockTagMatches(blockName, tag string) bool {
 			return true
 		}
 		return strings.HasSuffix(blockName, "_leaves") || featureBlockTagMatches(blockName, "small_flowers")
+	case "replaceable_by_mushrooms":
+		switch blockName {
+		case "pale_moss_carpet", "short_grass", "fern", "dead_bush", "vine", "glow_lichen", "sunflower", "lilac", "rose_bush", "peony", "tall_grass", "large_fern", "hanging_roots", "pitcher_plant", "water", "seagrass", "tall_seagrass", "brown_mushroom", "red_mushroom", "brown_mushroom_block", "red_mushroom_block", "warped_roots", "nether_sprouts", "crimson_roots", "leaf_litter", "short_dry_grass", "tall_dry_grass", "bush", "firefly_bush":
+			return true
+		}
+		return strings.HasSuffix(blockName, "_leaves") || featureBlockTagMatches(blockName, "small_flowers")
 	case "substrate_overworld":
 		return featureBlockTagMatches(blockName, "dirt") ||
 			featureBlockTagMatches(blockName, "mud") ||
@@ -3291,6 +4116,8 @@ func featureBlockTagMatches(blockName, tag string) bool {
 			featureBlockTagMatches(blockName, "substrate_overworld") ||
 			slices.Contains([]string{"gravel", "suspicious_gravel", "bamboo", "bamboo_sapling"}, blockName)
 	case "beneath_bamboo_podzol_replaceable":
+		return featureBlockTagMatches(blockName, "substrate_overworld")
+	case "beneath_tree_podzol_replaceable":
 		return featureBlockTagMatches(blockName, "substrate_overworld")
 	case "supports_small_dripleaf":
 		return blockName == "clay" || blockName == "moss_block"
@@ -3333,6 +4160,26 @@ func featureBlockTagMatches(blockName, tag string) bool {
 			featureBlockTagMatches(blockName, "mud") ||
 			featureBlockTagMatches(blockName, "moss_blocks") ||
 			blockName == "podzol"
+	case "forest_rock_can_place_on":
+		return featureBlockTagMatches(blockName, "substrate_overworld") || featureBlockTagMatches(blockName, "base_stone_overworld")
+	case "huge_brown_mushroom_can_place_on", "huge_red_mushroom_can_place_on":
+		return featureBlockTagMatches(blockName, "substrate_overworld") ||
+			blockName == "mycelium" ||
+			blockName == "podzol" ||
+			blockName == "crimson_nylium" ||
+			blockName == "warped_nylium"
+	case "ice_spike_replaceable":
+		return featureBlockTagMatches(blockName, "substrate_overworld") ||
+			blockName == "snow" ||
+			blockName == "snow_block" ||
+			blockName == "ice"
+	case "features_cannot_replace":
+		switch blockName {
+		case "bedrock", "mob_spawner", "chest", "end_portal_frame", "reinforced_deepslate", "trial_spawner", "vault":
+			return true
+		default:
+			return false
+		}
 	case "mangrove_roots_can_grow_through":
 		return slices.Contains([]string{"mud", "muddy_mangrove_roots", "mangrove_roots", "moss_carpet", "vine", "mangrove_propagule", "snow"}, blockName)
 	case "mangrove_logs_can_grow_through":
