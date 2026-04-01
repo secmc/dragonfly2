@@ -405,6 +405,10 @@ func (f ConfiguredFeatureDef) Geode() (GeodeConfig, error) {
 	return decodeFeatureConfig[GeodeConfig](f, "geode")
 }
 
+func (f ConfiguredFeatureDef) Fossil() (FossilConfig, error) {
+	return decodeFeatureConfig[FossilConfig](f, "fossil")
+}
+
 func (f ConfiguredFeatureDef) EndPlatform() (EndPlatformConfig, error) {
 	return decodeFeatureConfig[EndPlatformConfig](f, "end_platform")
 }
@@ -893,6 +897,14 @@ type GeodeCrackSettings struct {
 	BaseCrackSize       float64 `json:"base_crack_size"`
 	CrackPointOffset    int     `json:"crack_point_offset"`
 	GenerateCrackChance float64 `json:"generate_crack_chance"`
+}
+
+type FossilConfig struct {
+	FossilStructures       []string         `json:"fossil_structures"`
+	OverlayStructures      []string         `json:"overlay_structures"`
+	FossilProcessors       ProcessorListRef `json:"fossil_processors"`
+	OverlayProcessors      ProcessorListRef `json:"overlay_processors"`
+	MaxEmptyCornersAllowed int              `json:"max_empty_corners_allowed"`
 }
 
 type FeatureDecorator struct {

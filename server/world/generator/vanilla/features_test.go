@@ -979,6 +979,29 @@ func TestExecuteConfiguredAmethystGeodePlacesGeodeBlocks(t *testing.T) {
 	}
 }
 
+func TestExecuteConfiguredFossilPlacesTemplateBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			for y := 0; y <= 70; y++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, world.BlockRuntimeID(block.Sand{}))
+			}
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeDesert)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 48, 8}, gen.ConfiguredFeatureRef{Name: "fossil_coal"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected fossil_coal configured feature to place")
+	}
+	if countBlocksNamed(c, "minecraft:bone_block")+countBlocksNamed(c, "minecraft:coal_ore") == 0 {
+		t.Fatal("expected fossil feature to place template fossil blocks")
+	}
+}
+
 func TestExecuteConfiguredMegaJunglePlacesVines(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 

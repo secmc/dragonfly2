@@ -308,6 +308,12 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 			return false
 		}
 		return g.executeGeode(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
+	case "fossil":
+		cfg, err := feature.Fossil()
+		if err != nil {
+			return false
+		}
+		return g.executeFossil(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
 	case "sculk_patch":
 		cfg, err := feature.SculkPatch()
 		if err != nil {
@@ -1058,6 +1064,109 @@ func (g Generator) executeGeode(c *chunk.Chunk, pos cube.Pos, cfg gen.GeodeConfi
 		}
 	}
 	return placedAny
+}
+
+func (g Generator) executeFossil(c *chunk.Chunk, pos cube.Pos, cfg gen.FossilConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	if len(cfg.FossilStructures) == 0 || len(cfg.FossilStructures) != len(cfg.OverlayStructures) || g.structureTemplates == nil {
+		return false
+	}
+	index := int(rng.NextInt(uint32(len(cfg.FossilStructures))))
+	baseName := cfg.FossilStructures[index]
+	overlayName := cfg.OverlayStructures[index]
+	baseTemplate, err := g.structureTemplates.Template(baseName)
+	if err != nil {
+		return false
+	}
+	overlayTemplate, err := g.structureTemplates.Template(overlayName)
+	if err != nil {
+		return false
+	}
+	rotation := randomStructureRotation(rng)
+	rotSize := rotatedStructureSize(baseTemplate.Size, rotation)
+	lowCornerX := pos[0] - rotSize[0]/2
+	lowCornerZ := pos[2] - rotSize[2]/2
+	lowestSurfaceY := pos[1]
+	for xscan := 0; xscan < rotSize[0]; xscan++ {
+		for zscan := 0; zscan < rotSize[2]; zscan++ {
+			y := g.worldSurfaceLevelAt(lowCornerX+xscan, lowCornerZ+zscan, minY, maxY)
+			if y < lowestSurfaceY {
+				lowestSurfaceY = y
+			}
+		}
+	}
+	targetY := max(lowestSurfaceY-15-int(rng.NextInt(10)), minY+10)
+	reference := cube.Pos{lowCornerX, targetY, lowCornerZ}
+	box := structureBox{
+		minX: reference[0],
+		minY: reference[1],
+		minZ: reference[2],
+		maxX: reference[0] + rotSize[0] - 1,
+		maxY: reference[1] + rotSize[1] - 1,
+		maxZ: reference[2] + rotSize[2] - 1,
+	}
+	if g.fossilEmptyCorners(c, chunkX, chunkZ, minY, maxY, box) > cfg.MaxEmptyCornersAllowed {
+		return false
+	}
+
+	basePlacement := structureTemplatePlacement{
+		templateName: baseName,
+		ignoreAir:    false,
+		processors:   compileStructureProcessors(g.worldgen, cfg.FossilProcessors),
+	}
+	overlayPlacement := structureTemplatePlacement{
+		templateName: overlayName,
+		ignoreAir:    false,
+		processors:   compileStructureProcessors(g.worldgen, cfg.OverlayProcessors),
+	}
+
+	placedAny := false
+	for _, blockInfo := range g.processStructureTemplatePlacement(c, chunkX, chunkZ, reference, rotation, structureMirrorNone, cube.Pos{}, false, baseTemplate, basePlacement) {
+		if !g.positionInChunk(blockInfo.worldPos, chunkX, chunkZ, minY, maxY) {
+			continue
+		}
+		if blockInfo.state.Name == "structure_void" || blockInfo.state.Name == "jigsaw" || blockInfo.state.Name == "structure_block" || blockInfo.state.Name == "air" {
+			continue
+		}
+		placedState := applyPlacedStructureStateTransform(blockInfo.state, structureMirrorNone, rotation)
+		g.placeStructureBlockState(c, chunkX, chunkZ, minY, maxY, blockInfo.worldPos, placedState)
+		placedAny = true
+	}
+	for _, blockInfo := range g.processStructureTemplatePlacement(c, chunkX, chunkZ, reference, rotation, structureMirrorNone, cube.Pos{}, false, overlayTemplate, overlayPlacement) {
+		if !g.positionInChunk(blockInfo.worldPos, chunkX, chunkZ, minY, maxY) {
+			continue
+		}
+		if blockInfo.state.Name == "structure_void" || blockInfo.state.Name == "jigsaw" || blockInfo.state.Name == "structure_block" || blockInfo.state.Name == "air" {
+			continue
+		}
+		placedState := applyPlacedStructureStateTransform(blockInfo.state, structureMirrorNone, rotation)
+		g.placeStructureBlockState(c, chunkX, chunkZ, minY, maxY, blockInfo.worldPos, placedState)
+		placedAny = true
+	}
+	return placedAny
+}
+
+func (g Generator) fossilEmptyCorners(c *chunk.Chunk, chunkX, chunkZ, minY, maxY int, box structureBox) int {
+	corners := []cube.Pos{
+		{box.minX, box.minY, box.minZ},
+		{box.minX, box.minY, box.maxZ},
+		{box.minX, box.maxY, box.minZ},
+		{box.minX, box.maxY, box.maxZ},
+		{box.maxX, box.minY, box.minZ},
+		{box.maxX, box.minY, box.maxZ},
+		{box.maxX, box.maxY, box.minZ},
+		{box.maxX, box.maxY, box.maxZ},
+	}
+	count := 0
+	for _, corner := range corners {
+		if !g.positionInChunk(corner, chunkX, chunkZ, minY, maxY) {
+			continue
+		}
+		name := g.blockNameAt(c, corner)
+		if name == "air" || name == "lava" || name == "water" {
+			count++
+		}
+	}
+	return count
 }
 
 func (g Generator) setGeodeState(c *chunk.Chunk, pos cube.Pos, state gen.BlockState, cannotReplaceTag string, chunkX, chunkZ, minY, maxY int) bool {
