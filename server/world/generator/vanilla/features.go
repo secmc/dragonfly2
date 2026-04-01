@@ -399,6 +399,11 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 			return false
 		}
 		return g.executeIceberg(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
+	case "blue_ice":
+		if _, err := feature.BlueIce(); err != nil {
+			return false
+		}
+		return g.executeBlueIce(c, pos, chunkX, chunkZ, minY, maxY, rng)
 	case "monster_room":
 		if _, err := feature.MonsterRoom(); err != nil {
 			return false
@@ -2601,6 +2606,68 @@ func (g Generator) executeIceberg(c *chunk.Chunk, pos cube.Pos, cfg gen.BlockSta
 						placedAny = true
 					}
 				}
+			}
+		}
+	}
+	return placedAny
+}
+
+func (g Generator) executeBlueIce(c *chunk.Chunk, pos cube.Pos, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	if pos[1] > seaLevel-1 || !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+		return false
+	}
+	originName := g.blockNameAt(c, pos)
+	belowName := "air"
+	below := pos.Side(cube.FaceDown)
+	if g.positionInChunk(below, chunkX, chunkZ, minY, maxY) {
+		belowName = g.blockNameAt(c, below)
+	}
+	if originName != "water" && belowName != "water" {
+		return false
+	}
+	foundPackedIce := false
+	for _, face := range cube.Faces() {
+		if face == cube.FaceDown {
+			continue
+		}
+		neighbor := pos.Side(face)
+		if g.positionInChunk(neighbor, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, neighbor) == "packed_ice" {
+			foundPackedIce = true
+			break
+		}
+	}
+	if !foundPackedIce {
+		return false
+	}
+	placedAny := g.setBlockStateDirect(c, pos, gen.BlockState{Name: "blue_ice"})
+	for range 200 {
+		yOff := int(rng.NextInt(5)) - int(rng.NextInt(6))
+		xzDiff := 3
+		if yOff < 2 {
+			xzDiff += yOff / 2
+		}
+		if xzDiff < 1 {
+			continue
+		}
+		placePos := pos.Add(cube.Pos{
+			int(rng.NextInt(uint32(xzDiff))) - int(rng.NextInt(uint32(xzDiff))),
+			yOff,
+			int(rng.NextInt(uint32(xzDiff))) - int(rng.NextInt(uint32(xzDiff))),
+		})
+		if !g.positionInChunk(placePos, chunkX, chunkZ, minY, maxY) {
+			continue
+		}
+		placeName := g.blockNameAt(c, placePos)
+		if placeName != "air" && placeName != "water" && placeName != "packed_ice" && placeName != "ice" {
+			continue
+		}
+		for _, face := range cube.Faces() {
+			neighbor := placePos.Side(face)
+			if g.positionInChunk(neighbor, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, neighbor) == "blue_ice" {
+				if g.setBlockStateDirect(c, placePos, gen.BlockState{Name: "blue_ice"}) {
+					placedAny = true
+				}
+				break
 			}
 		}
 	}

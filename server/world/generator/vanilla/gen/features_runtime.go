@@ -409,6 +409,10 @@ func (f ConfiguredFeatureDef) Fossil() (FossilConfig, error) {
 	return decodeFeatureConfig[FossilConfig](f, "fossil")
 }
 
+func (f ConfiguredFeatureDef) BlueIce() (NoneFeatureConfig, error) {
+	return decodeFeatureConfig[NoneFeatureConfig](f, "blue_ice")
+}
+
 func (f ConfiguredFeatureDef) EndPlatform() (EndPlatformConfig, error) {
 	return decodeFeatureConfig[EndPlatformConfig](f, "end_platform")
 }

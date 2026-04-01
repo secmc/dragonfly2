@@ -896,6 +896,30 @@ func TestExecuteConfiguredIcebergPlacesIce(t *testing.T) {
 	}
 }
 
+func TestExecuteConfiguredBlueIcePlacesBlueIce(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			for y := seaLevel - 4; y <= seaLevel; y++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, world.BlockRuntimeID(block.Water{Still: true, Depth: 8}))
+			}
+		}
+	}
+	c.SetBlock(8, seaLevel-1, 9, 0, world.BlockRuntimeID(block.PackedIce{}))
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeFrozenOcean)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, seaLevel - 1, 8}, gen.ConfiguredFeatureRef{Name: "blue_ice"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected blue_ice configured feature to place")
+	}
+	if countBlocksNamed(c, "minecraft:blue_ice") == 0 {
+		t.Fatal("expected blue_ice configured feature to place blue ice")
+	}
+}
+
 func TestExecuteConfiguredMonsterRoomPlacesSpawnerAndRoomShell(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 
