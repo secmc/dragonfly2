@@ -7,6 +7,7 @@ import "github.com/df-mc/dragonfly/server/world"
 const (
 	hashAir = iota
 	hashAmethyst
+	hashAmethystCluster
 	hashAncientDebris
 	hashAndesite
 	hashAnvil
@@ -29,6 +30,7 @@ const (
 	hashBrewingStand
 	hashBricks
 	hashBrownMushroomBlock
+	hashBuddingAmethyst
 	hashCactus
 	hashCake
 	hashCalcite
@@ -120,6 +122,7 @@ const (
 	hashLantern
 	hashLapis
 	hashLapisOre
+	hashLargeAmethystBud
 	hashLava
 	hashLeafLitter
 	hashLeaves
@@ -131,6 +134,7 @@ const (
 	hashLoom
 	hashMangrovePropagule
 	hashMangroveRoots
+	hashMediumAmethystBud
 	hashMelon
 	hashMelonSeeds
 	hashMossBlock
@@ -191,6 +195,7 @@ const (
 	hashSkull
 	hashSlab
 	hashSlime
+	hashSmallAmethystBud
 	hashSmallDripleaf
 	hashSmithingTable
 	hashSmoker
@@ -242,6 +247,10 @@ func (Air) Hash() (uint64, uint64) {
 
 func (Amethyst) Hash() (uint64, uint64) {
 	return hashAmethyst, 0
+}
+
+func (b AmethystCluster) Hash() (uint64, uint64) {
+	return hashAmethystCluster, uint64(b.Face)
 }
 
 func (AncientDebris) Hash() (uint64, uint64) {
@@ -330,6 +339,10 @@ func (Bricks) Hash() (uint64, uint64) {
 
 func (b BrownMushroomBlock) Hash() (uint64, uint64) {
 	return hashBrownMushroomBlock, uint64(b.HugeMushroomBits)
+}
+
+func (BuddingAmethyst) Hash() (uint64, uint64) {
+	return hashBuddingAmethyst, 0
 }
 
 func (c Cactus) Hash() (uint64, uint64) {
@@ -696,6 +709,10 @@ func (l LapisOre) Hash() (uint64, uint64) {
 	return hashLapisOre, uint64(l.Type.Uint8())
 }
 
+func (b LargeAmethystBud) Hash() (uint64, uint64) {
+	return hashLargeAmethystBud, uint64(b.Face)
+}
+
 func (l Lava) Hash() (uint64, uint64) {
 	return hashLava, uint64(boolByte(l.Still)) | uint64(l.Depth)<<1 | uint64(boolByte(l.Falling))<<9
 }
@@ -738,6 +755,10 @@ func (m MangrovePropagule) Hash() (uint64, uint64) {
 
 func (MangroveRoots) Hash() (uint64, uint64) {
 	return hashMangroveRoots, 0
+}
+
+func (b MediumAmethystBud) Hash() (uint64, uint64) {
+	return hashMediumAmethystBud, uint64(b.Face)
 }
 
 func (Melon) Hash() (uint64, uint64) {
@@ -978,6 +999,10 @@ func (s Slab) Hash() (uint64, uint64) {
 
 func (Slime) Hash() (uint64, uint64) {
 	return hashSlime, 0
+}
+
+func (b SmallAmethystBud) Hash() (uint64, uint64) {
+	return hashSmallAmethystBud, uint64(b.Face)
 }
 
 func (s SmallDripleaf) Hash() (uint64, uint64) {

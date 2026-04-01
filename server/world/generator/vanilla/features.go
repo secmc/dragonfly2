@@ -296,6 +296,18 @@ func (g Generator) executeConfiguredFeature(c *chunk.Chunk, biomes sourceBiomeVo
 			return false
 		}
 		return g.executeDripstoneCluster(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
+	case "large_dripstone":
+		cfg, err := feature.LargeDripstone()
+		if err != nil {
+			return false
+		}
+		return g.executeLargeDripstone(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
+	case "geode":
+		cfg, err := feature.Geode()
+		if err != nil {
+			return false
+		}
+		return g.executeGeode(c, pos, cfg, chunkX, chunkZ, minY, maxY, rng)
 	case "sculk_patch":
 		cfg, err := feature.SculkPatch()
 		if err != nil {
@@ -860,6 +872,275 @@ func (g Generator) executeDripstoneCluster(c *chunk.Chunk, pos cube.Pos, cfg gen
 		}
 	}
 	return placedAny
+}
+
+func (g Generator) executeLargeDripstone(c *chunk.Chunk, pos cube.Pos, cfg gen.LargeDripstoneConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+		return false
+	}
+	rid := c.Block(uint8(pos[0]&15), int16(pos[1]), uint8(pos[2]&15), 0)
+	if rid != g.airRID && rid != g.waterRID {
+		return false
+	}
+
+	floor, ceiling, ok := g.findFloorAndCeiling(c, pos, cfg.FloorToCeilingSearchRange, chunkX, chunkZ, minY, maxY)
+	if !ok {
+		return false
+	}
+	columnHeight := ceiling[1] - floor[1] - 1
+	if columnHeight < 4 {
+		return false
+	}
+
+	maxColumnRadiusBasedOnHeight := int(float64(columnHeight) * cfg.MaxColumnRadiusToCaveHeightRatio)
+	maxColumnRadius := clamp(maxColumnRadiusBasedOnHeight, cfg.ColumnRadius.MinInclusive, cfg.ColumnRadius.MaxInclusive)
+	radius := clamp(g.sampleIntProvider(cfg.ColumnRadius, rng), cfg.ColumnRadius.MinInclusive, maxColumnRadius)
+	if radius <= 0 {
+		return false
+	}
+
+	scaleDown := g.sampleFloatProvider(cfg.StalactiteBluntness, rng)
+	scaleUp := g.sampleFloatProvider(cfg.StalagmiteBluntness, rng)
+	heightScale := g.sampleFloatProvider(cfg.HeightScale, rng)
+	if scaleDown <= 0 {
+		scaleDown = 0.3
+	}
+	if scaleUp <= 0 {
+		scaleUp = 0.4
+	}
+	if heightScale <= 0 {
+		heightScale = 1
+	}
+
+	stalactiteOrigin := ceiling.Side(cube.FaceDown)
+	stalagmiteOrigin := floor.Side(cube.FaceUp)
+	placedDown := g.placeLargeDripstoneColumn(c, stalactiteOrigin, false, radius, scaleDown, heightScale, chunkX, chunkZ, minY, maxY, rng)
+	placedUp := g.placeLargeDripstoneColumn(c, stalagmiteOrigin, true, radius, scaleUp, heightScale, chunkX, chunkZ, minY, maxY, rng)
+	return placedDown || placedUp
+}
+
+func (g Generator) executeGeode(c *chunk.Chunk, pos cube.Pos, cfg gen.GeodeConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	type geodePoint struct {
+		pos    cube.Pos
+		offset int
+	}
+	numPoints := max(1, g.sampleIntProvider(cfg.DistributionPoints, rng))
+	points := make([]geodePoint, 0, numPoints)
+	numInvalid := 0
+	for range numPoints {
+		x := g.sampleIntProvider(cfg.OuterWallDistance, rng)
+		y := g.sampleIntProvider(cfg.OuterWallDistance, rng)
+		z := g.sampleIntProvider(cfg.OuterWallDistance, rng)
+		pointPos := pos.Add(cube.Pos{x, y, z})
+		if !g.positionInChunk(pointPos, chunkX, chunkZ, minY, maxY) {
+			numInvalid++
+			continue
+		}
+		name := g.blockNameAt(c, pointPos)
+		if name == "air" || g.matchesFeatureBlockTag(name, cfg.Blocks.InvalidBlocks) {
+			numInvalid++
+			if numInvalid > cfg.InvalidBlocksThreshold {
+				return false
+			}
+		}
+		points = append(points, geodePoint{pos: pointPos, offset: max(1, g.sampleIntProvider(cfg.PointOffset, rng))})
+	}
+	if len(points) == 0 {
+		return false
+	}
+
+	var crackPoints []cube.Pos
+	shouldCrack := rng.NextDouble() < cfg.Crack.GenerateCrackChance
+	if shouldCrack {
+		crackOffset := numPoints*2 + 1
+		switch int(rng.NextInt(4)) {
+		case 0:
+			crackPoints = []cube.Pos{pos.Add(cube.Pos{crackOffset, 7, 0}), pos.Add(cube.Pos{crackOffset, 5, 0}), pos.Add(cube.Pos{crackOffset, 1, 0})}
+		case 1:
+			crackPoints = []cube.Pos{pos.Add(cube.Pos{0, 7, crackOffset}), pos.Add(cube.Pos{0, 5, crackOffset}), pos.Add(cube.Pos{0, 1, crackOffset})}
+		case 2:
+			crackPoints = []cube.Pos{pos.Add(cube.Pos{crackOffset, 7, crackOffset}), pos.Add(cube.Pos{crackOffset, 5, crackOffset}), pos.Add(cube.Pos{crackOffset, 1, crackOffset})}
+		default:
+			crackPoints = []cube.Pos{pos.Add(cube.Pos{0, 7, 0}), pos.Add(cube.Pos{0, 5, 0}), pos.Add(cube.Pos{0, 1, 0})}
+		}
+	}
+
+	crackSizeAdjustment := float64(numPoints) / float64(max(1, cfg.OuterWallDistance.MaxInclusive))
+	innerAir := 1.0 / math.Sqrt(cfg.Layers.Filling)
+	innermostBlockLayer := 1.0 / math.Sqrt(cfg.Layers.InnerLayer+crackSizeAdjustment)
+	innerCrust := 1.0 / math.Sqrt(cfg.Layers.MiddleLayer+crackSizeAdjustment)
+	outerCrust := 1.0 / math.Sqrt(cfg.Layers.OuterLayer+crackSizeAdjustment)
+	crackSize := 1.0 / math.Sqrt(cfg.Crack.BaseCrackSize+rng.NextDouble()/2.0+func() float64 {
+		if numPoints > 3 {
+			return crackSizeAdjustment
+		}
+		return 0
+	}())
+
+	var potentialCrystalPlacements []cube.Pos
+	placedAny := false
+	for x := pos[0] + cfg.MinGenOffset; x <= pos[0]+cfg.MaxGenOffset; x++ {
+		for y := pos[1] + cfg.MinGenOffset; y <= pos[1]+cfg.MaxGenOffset; y++ {
+			for z := pos[2] + cfg.MinGenOffset; z <= pos[2]+cfg.MaxGenOffset; z++ {
+				pointInside := cube.Pos{x, y, z}
+				if !g.positionInChunk(pointInside, chunkX, chunkZ, minY, maxY) {
+					continue
+				}
+				noiseOffset := g.geodeNoiseValue(pointInside) * cfg.NoiseMultiplier
+				distSumShell := 0.0
+				distSumCrack := 0.0
+				for _, point := range points {
+					distSumShell += 1.0/math.Sqrt(posDistSquared(pointInside, point.pos)+float64(point.offset)) + noiseOffset
+				}
+				for _, point := range crackPoints {
+					distSumCrack += 1.0/math.Sqrt(posDistSquared(pointInside, point)+float64(cfg.Crack.CrackPointOffset)) + noiseOffset
+				}
+				if distSumShell < outerCrust {
+					continue
+				}
+				switch {
+				case shouldCrack && distSumCrack >= crackSize && distSumShell < innerAir:
+					if g.setGeodeState(c, pointInside, gen.BlockState{Name: "air"}, cfg.Blocks.CannotReplace, chunkX, chunkZ, minY, maxY) {
+						placedAny = true
+					}
+				case distSumShell >= innerAir:
+					if state, ok := g.selectState(c, cfg.Blocks.FillingProvider, pointInside, rng, minY, maxY); ok && g.setGeodeState(c, pointInside, state, cfg.Blocks.CannotReplace, chunkX, chunkZ, minY, maxY) {
+						placedAny = true
+					}
+				case distSumShell >= innermostBlockLayer:
+					useAlt := rng.NextDouble() < cfg.UseAlternateLayer0Chance
+					provider := cfg.Blocks.InnerLayerProvider
+					if useAlt {
+						provider = cfg.Blocks.AlternateInnerLayerProvider
+					}
+					if state, ok := g.selectState(c, provider, pointInside, rng, minY, maxY); ok && g.setGeodeState(c, pointInside, state, cfg.Blocks.CannotReplace, chunkX, chunkZ, minY, maxY) {
+						placedAny = true
+					}
+					if (!cfg.PlacementsRequireLayer0Alt || useAlt) && rng.NextDouble() < cfg.UsePotentialPlacementsChance {
+						potentialCrystalPlacements = append(potentialCrystalPlacements, pointInside)
+					}
+				case distSumShell >= innerCrust:
+					if state, ok := g.selectState(c, cfg.Blocks.MiddleLayerProvider, pointInside, rng, minY, maxY); ok && g.setGeodeState(c, pointInside, state, cfg.Blocks.CannotReplace, chunkX, chunkZ, minY, maxY) {
+						placedAny = true
+					}
+				case distSumShell >= outerCrust:
+					if state, ok := g.selectState(c, cfg.Blocks.OuterLayerProvider, pointInside, rng, minY, maxY); ok && g.setGeodeState(c, pointInside, state, cfg.Blocks.CannotReplace, chunkX, chunkZ, minY, maxY) {
+						placedAny = true
+					}
+				}
+			}
+		}
+	}
+
+	for _, crystalPos := range potentialCrystalPlacements {
+		if len(cfg.Blocks.InnerPlacements) == 0 {
+			break
+		}
+		state := cfg.Blocks.InnerPlacements[int(rng.NextInt(uint32(len(cfg.Blocks.InnerPlacements))))]
+		for _, face := range cube.Faces() {
+			placePos := crystalPos.Side(face)
+			if !g.positionInChunk(placePos, chunkX, chunkZ, minY, maxY) {
+				continue
+			}
+			placeName := g.blockNameAt(c, placePos)
+			if placeName != "air" && placeName != "water" {
+				continue
+			}
+			props := cloneStateProperties(state.Properties)
+			if props == nil {
+				props = map[string]string{}
+			}
+			props["minecraft:block_face"] = face.String()
+			if g.setGeodeState(c, placePos, gen.BlockState{Name: state.Name, Properties: props}, cfg.Blocks.CannotReplace, chunkX, chunkZ, minY, maxY) {
+				placedAny = true
+				break
+			}
+		}
+	}
+	return placedAny
+}
+
+func (g Generator) setGeodeState(c *chunk.Chunk, pos cube.Pos, state gen.BlockState, cannotReplaceTag string, chunkX, chunkZ, minY, maxY int) bool {
+	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+		return false
+	}
+	if g.matchesFeatureBlockTag(g.blockNameAt(c, pos), cannotReplaceTag) {
+		return false
+	}
+	return g.setBlockStateDirect(c, pos, state)
+}
+
+func posDistSquared(a, b cube.Pos) float64 {
+	dx := float64(a[0] - b[0])
+	dy := float64(a[1] - b[1])
+	dz := float64(a[2] - b[2])
+	return dx*dx + dy*dy + dz*dz
+}
+
+func (g Generator) geodeNoiseValue(pos cube.Pos) float64 {
+	v := math.Sin(float64(pos[0])*12.9898 + float64(pos[1])*78.233 + float64(pos[2])*37.719 + float64(g.seed&0xffff))
+	return v - math.Floor(v)
+}
+
+func (g Generator) placeLargeDripstoneColumn(c *chunk.Chunk, root cube.Pos, pointingUp bool, radius int, bluntness, scale float64, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
+	var placedAny bool
+	for dx := -radius; dx <= radius; dx++ {
+		for dz := -radius; dz <= radius; dz++ {
+			currentRadius := math.Sqrt(float64(dx*dx + dz*dz))
+			if currentRadius > float64(radius) {
+				continue
+			}
+			height := g.largeDripstoneHeightAtRadius(currentRadius, radius, scale, bluntness)
+			if height <= 0 {
+				continue
+			}
+			if rng.NextDouble() < 0.2 {
+				height = int(float64(height) * (0.8 + rng.NextDouble()*0.2))
+			}
+			pos := root.Add(cube.Pos{dx, 0, dz})
+			hasBeenOutOfStone := false
+			maxYLimit := math.MaxInt
+			if pointingUp {
+				localX := pos[0] - chunkX*16
+				localZ := pos[2] - chunkZ*16
+				if localX >= 0 && localX < 16 && localZ >= 0 && localZ < 16 {
+					maxYLimit = g.heightmapPlacementY(c, localX, localZ, "WORLD_SURFACE_WG", minY, maxY)
+				}
+			}
+			for i := 0; i < height && pos[1] < maxYLimit; i++ {
+				if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+					break
+				}
+				name := g.blockNameAt(c, pos)
+				if name == "air" || name == "water" || name == "lava" {
+					hasBeenOutOfStone = true
+					if g.setBlockStateDirect(c, pos, gen.BlockState{Name: "dripstone_block"}) {
+						placedAny = true
+					}
+				} else if hasBeenOutOfStone && g.matchesFeatureBlockTag(name, "base_stone_overworld") {
+					break
+				}
+				if pointingUp {
+					pos = pos.Side(cube.FaceUp)
+				} else {
+					pos = pos.Side(cube.FaceDown)
+				}
+			}
+		}
+	}
+	return placedAny
+}
+
+func (g Generator) largeDripstoneHeightAtRadius(checkRadius float64, radius int, scale, bluntness float64) int {
+	if radius <= 0 {
+		return 0
+	}
+	normalized := 1.0 - checkRadius/float64(max(radius, 1))
+	if normalized <= 0 {
+		return 0
+	}
+	height := normalized * normalized * float64(radius) * (1.0 + scale) / max(bluntness, 0.1)
+	return int(math.Round(height))
 }
 
 func (g Generator) executeSculkPatch(c *chunk.Chunk, pos cube.Pos, cfg gen.SculkPatchConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
@@ -3379,6 +3660,16 @@ func (g Generator) featureBlockFromState(state gen.BlockState, rng *gen.Xoroshir
 		return block.RedMushroomBlock{HugeMushroomBits: hugeMushroomBitsFromState(state.Properties, false)}, true
 	case "mushroom_stem":
 		return block.MushroomStem{HugeMushroomBits: hugeMushroomBitsFromState(state.Properties, true)}, true
+	case "budding_amethyst":
+		return block.BuddingAmethyst{}, true
+	case "small_amethyst_bud":
+		return block.SmallAmethystBud{Face: parseStateFace(state.Properties, "minecraft:block_face", "facing_direction", "facing")}, true
+	case "medium_amethyst_bud":
+		return block.MediumAmethystBud{Face: parseStateFace(state.Properties, "minecraft:block_face", "facing_direction", "facing")}, true
+	case "large_amethyst_bud":
+		return block.LargeAmethystBud{Face: parseStateFace(state.Properties, "minecraft:block_face", "facing_direction", "facing")}, true
+	case "amethyst_cluster":
+		return block.AmethystCluster{Face: parseStateFace(state.Properties, "minecraft:block_face", "facing_direction", "facing")}, true
 	}
 
 	props := featureBlockProperties(state.Properties)
@@ -3463,6 +3754,33 @@ func parseStateDirection(properties map[string]string, keys ...string) cube.Dire
 		}
 	}
 	return cube.North
+}
+
+func parseStateFace(properties map[string]string, keys ...string) cube.Face {
+	if properties == nil {
+		return cube.FaceUp
+	}
+	for _, key := range keys {
+		value, ok := properties[key]
+		if !ok {
+			continue
+		}
+		switch value {
+		case "down":
+			return cube.FaceDown
+		case "north":
+			return cube.FaceNorth
+		case "south":
+			return cube.FaceSouth
+		case "west":
+			return cube.FaceWest
+		case "east":
+			return cube.FaceEast
+		default:
+			return cube.FaceUp
+		}
+	}
+	return cube.FaceUp
 }
 
 func firstNonEmpty(values ...string) string {
@@ -4176,6 +4494,13 @@ func featureBlockTagMatches(blockName, tag string) bool {
 	case "features_cannot_replace":
 		switch blockName {
 		case "bedrock", "mob_spawner", "chest", "end_portal_frame", "reinforced_deepslate", "trial_spawner", "vault":
+			return true
+		default:
+			return false
+		}
+	case "geode_invalid_blocks":
+		switch blockName {
+		case "bedrock", "water", "lava", "ice", "packed_ice", "blue_ice":
 			return true
 		default:
 			return false

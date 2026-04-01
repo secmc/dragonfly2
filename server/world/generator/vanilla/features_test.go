@@ -927,6 +927,58 @@ func TestExecuteConfiguredMonsterRoomPlacesSpawnerAndRoomShell(t *testing.T) {
 	}
 }
 
+func TestExecuteConfiguredLargeDripstonePlacesDripstoneBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			for y := 20; y <= 60; y++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, g.airRID)
+			}
+			c.SetBlock(uint8(x), 20, uint8(z), 0, world.BlockRuntimeID(block.Stone{}))
+			c.SetBlock(uint8(x), 60, uint8(z), 0, world.BlockRuntimeID(block.Stone{}))
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomeDripstoneCaves)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 40, 8}, gen.ConfiguredFeatureRef{Name: "large_dripstone"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected large_dripstone configured feature to place")
+	}
+	if countBlocksNamed(c, "minecraft:dripstone_block") == 0 {
+		t.Fatal("expected large_dripstone to place dripstone blocks")
+	}
+}
+
+func TestExecuteConfiguredAmethystGeodePlacesGeodeBlocks(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	c := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			for y := 0; y <= 48; y++ {
+				c.SetBlock(uint8(x), int16(y), uint8(z), 0, world.BlockRuntimeID(block.Stone{}))
+			}
+		}
+	}
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	biomes := filledTestBiomeVolume(c.Range().Min(), c.Range().Max(), gen.BiomePlains)
+	if !g.executeConfiguredFeature(c, biomes, cube.Pos{8, 24, 8}, gen.ConfiguredFeatureRef{Name: "amethyst_geode"}, "", 0, 0, c.Range().Min(), c.Range().Max(), &rng, 0) {
+		t.Fatal("expected amethyst_geode configured feature to place")
+	}
+	total := countBlocksNamed(c, "minecraft:amethyst_block") +
+		countBlocksNamed(c, "minecraft:budding_amethyst") +
+		countBlocksNamed(c, "minecraft:calcite") +
+		countBlocksNamed(c, "minecraft:smooth_basalt")
+	if total == 0 {
+		t.Fatal("expected amethyst_geode to place layered geode blocks")
+	}
+}
+
 func TestExecuteConfiguredMegaJunglePlacesVines(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 

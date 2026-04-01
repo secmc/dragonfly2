@@ -397,6 +397,14 @@ func (f ConfiguredFeatureDef) MonsterRoom() (NoneFeatureConfig, error) {
 	return decodeFeatureConfig[NoneFeatureConfig](f, "monster_room")
 }
 
+func (f ConfiguredFeatureDef) LargeDripstone() (LargeDripstoneConfig, error) {
+	return decodeFeatureConfig[LargeDripstoneConfig](f, "large_dripstone")
+}
+
+func (f ConfiguredFeatureDef) Geode() (GeodeConfig, error) {
+	return decodeFeatureConfig[GeodeConfig](f, "geode")
+}
+
 func (f ConfiguredFeatureDef) EndPlatform() (EndPlatformConfig, error) {
 	return decodeFeatureConfig[EndPlatformConfig](f, "end_platform")
 }
@@ -833,6 +841,58 @@ type NoneFeatureConfig struct{}
 
 type BlockStateFeatureConfig struct {
 	State BlockState `json:"state"`
+}
+
+type LargeDripstoneConfig struct {
+	FloorToCeilingSearchRange        int           `json:"floor_to_ceiling_search_range"`
+	ColumnRadius                     IntProvider   `json:"column_radius"`
+	HeightScale                      FloatProvider `json:"height_scale"`
+	MaxColumnRadiusToCaveHeightRatio float64       `json:"max_column_radius_to_cave_height_ratio"`
+	StalactiteBluntness              FloatProvider `json:"stalactite_bluntness"`
+	StalagmiteBluntness              FloatProvider `json:"stalagmite_bluntness"`
+	WindSpeed                        FloatProvider `json:"wind_speed"`
+	MinRadiusForWind                 int           `json:"min_radius_for_wind"`
+	MinBluntnessForWind              float64       `json:"min_bluntness_for_wind"`
+}
+
+type GeodeConfig struct {
+	Blocks                       GeodeBlockSettings `json:"blocks"`
+	Layers                       GeodeLayerSettings `json:"layers"`
+	Crack                        GeodeCrackSettings `json:"crack"`
+	UsePotentialPlacementsChance float64            `json:"use_potential_placements_chance"`
+	UseAlternateLayer0Chance     float64            `json:"use_alternate_layer0_chance"`
+	PlacementsRequireLayer0Alt   bool               `json:"placements_require_layer0_alternate"`
+	OuterWallDistance            IntProvider        `json:"outer_wall_distance"`
+	DistributionPoints           IntProvider        `json:"distribution_points"`
+	PointOffset                  IntProvider        `json:"point_offset"`
+	MinGenOffset                 int                `json:"min_gen_offset"`
+	MaxGenOffset                 int                `json:"max_gen_offset"`
+	NoiseMultiplier              float64            `json:"noise_multiplier"`
+	InvalidBlocksThreshold       int                `json:"invalid_blocks_threshold"`
+}
+
+type GeodeBlockSettings struct {
+	AlternateInnerLayerProvider StateProvider `json:"alternate_inner_layer_provider"`
+	CannotReplace               string        `json:"cannot_replace"`
+	FillingProvider             StateProvider `json:"filling_provider"`
+	InnerLayerProvider          StateProvider `json:"inner_layer_provider"`
+	InnerPlacements             []BlockState  `json:"inner_placements"`
+	InvalidBlocks               string        `json:"invalid_blocks"`
+	MiddleLayerProvider         StateProvider `json:"middle_layer_provider"`
+	OuterLayerProvider          StateProvider `json:"outer_layer_provider"`
+}
+
+type GeodeLayerSettings struct {
+	Filling     float64 `json:"filling"`
+	InnerLayer  float64 `json:"inner_layer"`
+	MiddleLayer float64 `json:"middle_layer"`
+	OuterLayer  float64 `json:"outer_layer"`
+}
+
+type GeodeCrackSettings struct {
+	BaseCrackSize       float64 `json:"base_crack_size"`
+	CrackPointOffset    int     `json:"crack_point_offset"`
+	GenerateCrackChance float64 `json:"generate_crack_chance"`
 }
 
 type FeatureDecorator struct {
