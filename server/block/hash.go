@@ -7,6 +7,7 @@ import "github.com/df-mc/dragonfly/server/world"
 const (
 	hashAir = iota
 	hashAmethyst
+	hashAmethystCluster
 	hashAncientDebris
 	hashAndesite
 	hashAnvil
@@ -28,6 +29,8 @@ const (
 	hashBookshelf
 	hashBrewingStand
 	hashBricks
+	hashBrownMushroomBlock
+	hashBuddingAmethyst
 	hashCactus
 	hashCake
 	hashCalcite
@@ -119,6 +122,7 @@ const (
 	hashLantern
 	hashLapis
 	hashLapisOre
+	hashLargeAmethystBud
 	hashLava
 	hashLeafLitter
 	hashLeaves
@@ -130,6 +134,7 @@ const (
 	hashLoom
 	hashMangrovePropagule
 	hashMangroveRoots
+	hashMediumAmethystBud
 	hashMelon
 	hashMelonSeeds
 	hashMossBlock
@@ -137,6 +142,7 @@ const (
 	hashMud
 	hashMudBricks
 	hashMuddyMangroveRoots
+	hashMushroomStem
 	hashNetherBrickFence
 	hashNetherBricks
 	hashNetherGoldOre
@@ -173,6 +179,7 @@ const (
 	hashRawCopper
 	hashRawGold
 	hashRawIron
+	hashRedMushroomBlock
 	hashReinforcedDeepslate
 	hashResin
 	hashResinBricks
@@ -188,6 +195,7 @@ const (
 	hashSkull
 	hashSlab
 	hashSlime
+	hashSmallAmethystBud
 	hashSmallDripleaf
 	hashSmithingTable
 	hashSmoker
@@ -195,6 +203,7 @@ const (
 	hashSnow
 	hashSoulSand
 	hashSoulSoil
+	hashSpawner
 	hashSponge
 	hashSporeBlossom
 	hashStainedGlass
@@ -238,6 +247,10 @@ func (Air) Hash() (uint64, uint64) {
 
 func (Amethyst) Hash() (uint64, uint64) {
 	return hashAmethyst, 0
+}
+
+func (b AmethystCluster) Hash() (uint64, uint64) {
+	return hashAmethystCluster, uint64(b.Face)
 }
 
 func (AncientDebris) Hash() (uint64, uint64) {
@@ -322,6 +335,14 @@ func (b BrewingStand) Hash() (uint64, uint64) {
 
 func (Bricks) Hash() (uint64, uint64) {
 	return hashBricks, 0
+}
+
+func (b BrownMushroomBlock) Hash() (uint64, uint64) {
+	return hashBrownMushroomBlock, uint64(b.HugeMushroomBits)
+}
+
+func (BuddingAmethyst) Hash() (uint64, uint64) {
+	return hashBuddingAmethyst, 0
 }
 
 func (c Cactus) Hash() (uint64, uint64) {
@@ -688,6 +709,10 @@ func (l LapisOre) Hash() (uint64, uint64) {
 	return hashLapisOre, uint64(l.Type.Uint8())
 }
 
+func (b LargeAmethystBud) Hash() (uint64, uint64) {
+	return hashLargeAmethystBud, uint64(b.Face)
+}
+
 func (l Lava) Hash() (uint64, uint64) {
 	return hashLava, uint64(boolByte(l.Still)) | uint64(l.Depth)<<1 | uint64(boolByte(l.Falling))<<9
 }
@@ -732,6 +757,10 @@ func (MangroveRoots) Hash() (uint64, uint64) {
 	return hashMangroveRoots, 0
 }
 
+func (b MediumAmethystBud) Hash() (uint64, uint64) {
+	return hashMediumAmethystBud, uint64(b.Face)
+}
+
 func (Melon) Hash() (uint64, uint64) {
 	return hashMelon, 0
 }
@@ -758,6 +787,10 @@ func (MudBricks) Hash() (uint64, uint64) {
 
 func (m MuddyMangroveRoots) Hash() (uint64, uint64) {
 	return hashMuddyMangroveRoots, uint64(m.Axis)
+}
+
+func (m MushroomStem) Hash() (uint64, uint64) {
+	return hashMushroomStem, uint64(m.HugeMushroomBits)
 }
 
 func (NetherBrickFence) Hash() (uint64, uint64) {
@@ -904,6 +937,10 @@ func (RawIron) Hash() (uint64, uint64) {
 	return hashRawIron, 0
 }
 
+func (r RedMushroomBlock) Hash() (uint64, uint64) {
+	return hashRedMushroomBlock, uint64(r.HugeMushroomBits)
+}
+
 func (ReinforcedDeepslate) Hash() (uint64, uint64) {
 	return hashReinforcedDeepslate, 0
 }
@@ -964,6 +1001,10 @@ func (Slime) Hash() (uint64, uint64) {
 	return hashSlime, 0
 }
 
+func (b SmallAmethystBud) Hash() (uint64, uint64) {
+	return hashSmallAmethystBud, uint64(b.Face)
+}
+
 func (s SmallDripleaf) Hash() (uint64, uint64) {
 	return hashSmallDripleaf, uint64(boolByte(s.Upper)) | uint64(s.Facing)<<1
 }
@@ -990,6 +1031,10 @@ func (SoulSand) Hash() (uint64, uint64) {
 
 func (SoulSoil) Hash() (uint64, uint64) {
 	return hashSoulSoil, 0
+}
+
+func (Spawner) Hash() (uint64, uint64) {
+	return hashSpawner, 0
 }
 
 func (s Sponge) Hash() (uint64, uint64) {

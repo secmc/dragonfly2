@@ -365,6 +365,50 @@ func (f ConfiguredFeatureDef) EndSpike() (EndSpikeConfig, error) {
 	return decodeFeatureConfig[EndSpikeConfig](f, "end_spike")
 }
 
+func (f ConfiguredFeatureDef) BlockBlob() (BlockBlobConfig, error) {
+	return decodeFeatureConfig[BlockBlobConfig](f, "block_blob")
+}
+
+func (f ConfiguredFeatureDef) Spike() (SpikeConfig, error) {
+	return decodeFeatureConfig[SpikeConfig](f, "spike")
+}
+
+func (f ConfiguredFeatureDef) HugeBrownMushroom() (HugeMushroomConfig, error) {
+	return decodeFeatureConfig[HugeMushroomConfig](f, "huge_brown_mushroom")
+}
+
+func (f ConfiguredFeatureDef) HugeRedMushroom() (HugeMushroomConfig, error) {
+	return decodeFeatureConfig[HugeMushroomConfig](f, "huge_red_mushroom")
+}
+
+func (f ConfiguredFeatureDef) DesertWell() (NoneFeatureConfig, error) {
+	return decodeFeatureConfig[NoneFeatureConfig](f, "desert_well")
+}
+
+func (f ConfiguredFeatureDef) VoidStartPlatform() (NoneFeatureConfig, error) {
+	return decodeFeatureConfig[NoneFeatureConfig](f, "void_start_platform")
+}
+
+func (f ConfiguredFeatureDef) Iceberg() (BlockStateFeatureConfig, error) {
+	return decodeFeatureConfig[BlockStateFeatureConfig](f, "iceberg")
+}
+
+func (f ConfiguredFeatureDef) MonsterRoom() (NoneFeatureConfig, error) {
+	return decodeFeatureConfig[NoneFeatureConfig](f, "monster_room")
+}
+
+func (f ConfiguredFeatureDef) LargeDripstone() (LargeDripstoneConfig, error) {
+	return decodeFeatureConfig[LargeDripstoneConfig](f, "large_dripstone")
+}
+
+func (f ConfiguredFeatureDef) Geode() (GeodeConfig, error) {
+	return decodeFeatureConfig[GeodeConfig](f, "geode")
+}
+
+func (f ConfiguredFeatureDef) Fossil() (FossilConfig, error) {
+	return decodeFeatureConfig[FossilConfig](f, "fossil")
+}
+
 func (f ConfiguredFeatureDef) EndPlatform() (EndPlatformConfig, error) {
 	return decodeFeatureConfig[EndPlatformConfig](f, "end_platform")
 }
@@ -777,6 +821,90 @@ type EndPlatformConfig struct{}
 type EndGatewayConfig struct {
 	Exact bool      `json:"exact"`
 	Exit  *BlockPos `json:"exit"`
+}
+
+type BlockBlobConfig struct {
+	CanPlaceOn BlockPredicate `json:"can_place_on"`
+	State      BlockState     `json:"state"`
+}
+
+type SpikeConfig struct {
+	CanPlaceOn BlockPredicate `json:"can_place_on"`
+	CanReplace BlockPredicate `json:"can_replace"`
+	State      BlockState     `json:"state"`
+}
+
+type HugeMushroomConfig struct {
+	CanPlaceOn    BlockPredicate `json:"can_place_on"`
+	CapProvider   StateProvider  `json:"cap_provider"`
+	FoliageRadius int            `json:"foliage_radius"`
+	StemProvider  StateProvider  `json:"stem_provider"`
+}
+
+type NoneFeatureConfig struct{}
+
+type BlockStateFeatureConfig struct {
+	State BlockState `json:"state"`
+}
+
+type LargeDripstoneConfig struct {
+	FloorToCeilingSearchRange        int           `json:"floor_to_ceiling_search_range"`
+	ColumnRadius                     IntProvider   `json:"column_radius"`
+	HeightScale                      FloatProvider `json:"height_scale"`
+	MaxColumnRadiusToCaveHeightRatio float64       `json:"max_column_radius_to_cave_height_ratio"`
+	StalactiteBluntness              FloatProvider `json:"stalactite_bluntness"`
+	StalagmiteBluntness              FloatProvider `json:"stalagmite_bluntness"`
+	WindSpeed                        FloatProvider `json:"wind_speed"`
+	MinRadiusForWind                 int           `json:"min_radius_for_wind"`
+	MinBluntnessForWind              float64       `json:"min_bluntness_for_wind"`
+}
+
+type GeodeConfig struct {
+	Blocks                       GeodeBlockSettings `json:"blocks"`
+	Layers                       GeodeLayerSettings `json:"layers"`
+	Crack                        GeodeCrackSettings `json:"crack"`
+	UsePotentialPlacementsChance float64            `json:"use_potential_placements_chance"`
+	UseAlternateLayer0Chance     float64            `json:"use_alternate_layer0_chance"`
+	PlacementsRequireLayer0Alt   bool               `json:"placements_require_layer0_alternate"`
+	OuterWallDistance            IntProvider        `json:"outer_wall_distance"`
+	DistributionPoints           IntProvider        `json:"distribution_points"`
+	PointOffset                  IntProvider        `json:"point_offset"`
+	MinGenOffset                 int                `json:"min_gen_offset"`
+	MaxGenOffset                 int                `json:"max_gen_offset"`
+	NoiseMultiplier              float64            `json:"noise_multiplier"`
+	InvalidBlocksThreshold       int                `json:"invalid_blocks_threshold"`
+}
+
+type GeodeBlockSettings struct {
+	AlternateInnerLayerProvider StateProvider `json:"alternate_inner_layer_provider"`
+	CannotReplace               string        `json:"cannot_replace"`
+	FillingProvider             StateProvider `json:"filling_provider"`
+	InnerLayerProvider          StateProvider `json:"inner_layer_provider"`
+	InnerPlacements             []BlockState  `json:"inner_placements"`
+	InvalidBlocks               string        `json:"invalid_blocks"`
+	MiddleLayerProvider         StateProvider `json:"middle_layer_provider"`
+	OuterLayerProvider          StateProvider `json:"outer_layer_provider"`
+}
+
+type GeodeLayerSettings struct {
+	Filling     float64 `json:"filling"`
+	InnerLayer  float64 `json:"inner_layer"`
+	MiddleLayer float64 `json:"middle_layer"`
+	OuterLayer  float64 `json:"outer_layer"`
+}
+
+type GeodeCrackSettings struct {
+	BaseCrackSize       float64 `json:"base_crack_size"`
+	CrackPointOffset    int     `json:"crack_point_offset"`
+	GenerateCrackChance float64 `json:"generate_crack_chance"`
+}
+
+type FossilConfig struct {
+	FossilStructures       []string         `json:"fossil_structures"`
+	OverlayStructures      []string         `json:"overlay_structures"`
+	FossilProcessors       ProcessorListRef `json:"fossil_processors"`
+	OverlayProcessors      ProcessorListRef `json:"overlay_processors"`
+	MaxEmptyCornersAllowed int              `json:"max_empty_corners_allowed"`
 }
 
 type FeatureDecorator struct {

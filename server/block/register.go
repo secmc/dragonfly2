@@ -1,6 +1,7 @@
 package block
 
 import (
+	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/item"
 	"github.com/df-mc/dragonfly/server/world"
 )
@@ -11,6 +12,7 @@ import (
 func init() {
 	world.RegisterBlock(Air{})
 	world.RegisterBlock(Amethyst{})
+	world.RegisterBlock(BuddingAmethyst{})
 	world.RegisterBlock(AncientDebris{})
 	world.RegisterBlock(Andesite{Polished: true})
 	world.RegisterBlock(Andesite{})
@@ -111,6 +113,7 @@ func init() {
 	world.RegisterBlock(Sponge{Wet: true})
 	world.RegisterBlock(Sponge{})
 	world.RegisterBlock(SporeBlossom{})
+	world.RegisterBlock(Spawner{})
 	world.RegisterBlock(ChorusPlant{})
 	world.RegisterBlock(Fungus{})
 	world.RegisterBlock(Fungus{Warped: true})
@@ -139,6 +142,7 @@ func init() {
 	}
 
 	registerAll(allAnvils())
+	registerAll(allAmethystCluster())
 	registerAll(allAzalea())
 	registerAll(allBamboo())
 	registerAll(allBanners())
@@ -150,6 +154,7 @@ func init() {
 	registerAll(allBlastFurnaces())
 	registerAll(allBoneBlock())
 	registerAll(allBrewingStands())
+	registerAll(allBrownMushroomBlock())
 	registerAll(allCactus())
 	registerAll(allCake())
 	registerAll(allCampfires())
@@ -187,6 +192,7 @@ func init() {
 	registerAll(allKelp())
 	registerAll(allLadders())
 	registerAll(allLanterns())
+	registerAll(allLargeAmethystBud())
 	registerAll(allLava())
 	registerAll(allLeafLitter())
 	registerAll(allLeaves())
@@ -196,8 +202,10 @@ func init() {
 	registerAll(allLogs())
 	registerAll(allLooms())
 	registerAll(allMelonStems())
+	registerAll(allMushroomStem())
 	registerAll(allMuddyMangroveRoots())
 	registerAll(allMangrovePropagule())
+	registerAll(allMediumAmethystBud())
 	registerAll(allNetherBricks())
 	registerAll(allPortals())
 	registerAll(allNetherVines())
@@ -212,9 +220,11 @@ func init() {
 	registerAll(allPumpkins())
 	registerAll(allPurpurs())
 	registerAll(allQuartz())
+	registerAll(allRedMushroomBlock())
 	registerAll(allSandstones())
 	registerAll(allSeaPickles())
 	registerAll(allSigns())
+	registerAll(allSmallAmethystBud())
 	registerAll(allSmallDripleaf())
 	registerAll(allSkulls())
 	registerAll(allSlabs())
@@ -250,6 +260,7 @@ func init() {
 func init() {
 	world.RegisterItem(Air{})
 	world.RegisterItem(Amethyst{})
+	world.RegisterItem(BuddingAmethyst{})
 	world.RegisterItem(AncientDebris{})
 	world.RegisterItem(Andesite{Polished: true})
 	world.RegisterItem(Andesite{})
@@ -266,6 +277,10 @@ func init() {
 	world.RegisterItem(Bookshelf{})
 	world.RegisterItem(BrewingStand{})
 	world.RegisterItem(Bricks{})
+	world.RegisterItem(AmethystCluster{Face: cube.FaceUp})
+	world.RegisterItem(SmallAmethystBud{Face: cube.FaceUp})
+	world.RegisterItem(MediumAmethystBud{Face: cube.FaceUp})
+	world.RegisterItem(LargeAmethystBud{Face: cube.FaceUp})
 	world.RegisterItem(Cactus{})
 	world.RegisterItem(Cake{})
 	world.RegisterItem(Calcite{})
