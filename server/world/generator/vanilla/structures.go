@@ -906,14 +906,15 @@ func (g Generator) placeStructureBlockState(c *chunk.Chunk, chunkX, chunkZ, minY
 	worldX := worldPos[0]
 	worldY := worldPos[1]
 	worldZ := worldPos[2]
-	if worldX < chunkX*16 || worldX >= chunkX*16+16 || worldZ < chunkZ*16 || worldZ >= chunkZ*16+16 || worldY < minY || worldY > maxY {
+	if !g.positionInFeatureScope(worldPos, chunkX, chunkZ, minY, maxY) {
 		return
 	}
 	rid, ok := g.lookupTemplateBlock(structureLookupName(state.Name), structureLookupProperties(state.Name, state.Properties))
 	if !ok {
 		return
 	}
-	c.SetBlock(uint8(worldX-chunkX*16), int16(worldY), uint8(worldZ-chunkZ*16), 0, rid)
+	c = g.chunkForActiveTreePos(c, worldPos)
+	c.SetBlock(uint8(worldX&15), int16(worldY), uint8(worldZ&15), 0, rid)
 }
 
 func (g Generator) lookupTemplateBlock(name string, properties map[string]any) (uint32, bool) {

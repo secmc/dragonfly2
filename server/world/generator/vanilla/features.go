@@ -25,22 +25,22 @@ func (g Generator) decorateFeatures(c *chunk.Chunk, biomes sourceBiomeVolume, ch
 	}
 
 	decorationSeed := g.decorationSeed(chunkX, chunkZ)
-	treeFeatureCache := make(map[string]bool)
+	regionFeatureCache := make(map[string]bool)
 	var treeRegion *treeDecorationRegion
 	for stepIndex := 0; stepIndex < featureStepCount; stepIndex++ {
 		step := gen.GenerationStep(stepIndex)
 		for _, featureIndex := range g.biomeGeneration.featureIndexesForStep(possibleBiomes, step) {
 			featureName := g.biomeGeneration.stepFeatures[stepIndex].features[featureIndex]
-			treeFeature, ok := treeFeatureCache[featureName]
+			needsRegion, ok := regionFeatureCache[featureName]
 			if !ok {
-				treeFeature = g.placedFeatureMayPlaceTrees(featureName)
-				treeFeatureCache[featureName] = treeFeature
+				needsRegion = g.placedFeatureNeedsDecorationRegion(featureName)
+				regionFeatureCache[featureName] = needsRegion
 			}
-			if treeFeature {
+			if needsRegion {
 				if treeRegion == nil {
 					treeRegion = newTreeDecorationRegion(g, c, biomes, chunkX, chunkZ, minY, maxY)
 				}
-				g.runPlacedTreeFeatureAcrossRegion(treeRegion, step, featureName, featureIndex)
+				g.runPlacedFeatureAcrossRegion(treeRegion, step, featureName, featureIndex)
 				continue
 			}
 			g.runPlacedFeature(c, biomes, chunkX, chunkZ, minY, maxY, step, featureName, featureIndex, decorationSeed)
@@ -60,7 +60,7 @@ func (g Generator) decorateFeaturesAndStructures(c *chunk.Chunk, biomes sourceBi
 			decorationSeed = g.decorationSeed(chunkX, chunkZ)
 		}
 	}
-	treeFeatureCache := make(map[string]bool)
+	regionFeatureCache := make(map[string]bool)
 
 	var surfaceSampler *structureHeightSampler
 	if g.structureTemplates != nil && g.structureStarts != nil && len(g.structurePlanners) > 0 {
@@ -77,16 +77,16 @@ func (g Generator) decorateFeaturesAndStructures(c *chunk.Chunk, biomes sourceBi
 		}
 		for _, featureIndex := range g.biomeGeneration.featureIndexesForStep(possibleBiomes, step) {
 			featureName := g.biomeGeneration.stepFeatures[stepIndex].features[featureIndex]
-			treeFeature, ok := treeFeatureCache[featureName]
+			needsRegion, ok := regionFeatureCache[featureName]
 			if !ok {
-				treeFeature = g.placedFeatureMayPlaceTrees(featureName)
-				treeFeatureCache[featureName] = treeFeature
+				needsRegion = g.placedFeatureNeedsDecorationRegion(featureName)
+				regionFeatureCache[featureName] = needsRegion
 			}
-			if treeFeature {
+			if needsRegion {
 				if treeRegion == nil {
 					treeRegion = newTreeDecorationRegion(g, c, biomes, chunkX, chunkZ, minY, maxY)
 				}
-				g.runPlacedTreeFeatureAcrossRegion(treeRegion, step, featureName, featureIndex)
+				g.runPlacedFeatureAcrossRegion(treeRegion, step, featureName, featureIndex)
 				continue
 			}
 			g.runPlacedFeature(c, biomes, chunkX, chunkZ, minY, maxY, step, featureName, featureIndex, decorationSeed)
@@ -543,7 +543,7 @@ func (g Generator) executeRandomPatch(c *chunk.Chunk, biomes sourceBiomeVolume, 
 			g.signedSpread(rng, cfg.YSpread),
 			g.signedSpread(rng, cfg.XZSpread),
 		})
-		if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+		if !g.positionInFeatureScope(pos, chunkX, chunkZ, minY, maxY) {
 			continue
 		}
 		if g.executePlacedFeatureRef(c, biomes, pos, cfg.Feature, topFeatureName, chunkX, chunkZ, minY, maxY, rng, depth+1) {
@@ -886,10 +886,10 @@ func (g Generator) executeDripstoneCluster(c *chunk.Chunk, pos cube.Pos, cfg gen
 }
 
 func (g Generator) executeLargeDripstone(c *chunk.Chunk, pos cube.Pos, cfg gen.LargeDripstoneConfig, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
-	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+	if !g.positionInFeatureScope(pos, chunkX, chunkZ, minY, maxY) {
 		return false
 	}
-	rid := c.Block(uint8(pos[0]&15), int16(pos[1]), uint8(pos[2]&15), 0)
+	rid := g.runtimeIDAt(c, pos)
 	if rid != g.airRID && rid != g.waterRID {
 		return false
 	}
@@ -943,7 +943,7 @@ func (g Generator) executeGeode(c *chunk.Chunk, pos cube.Pos, cfg gen.GeodeConfi
 		y := g.sampleIntProvider(cfg.OuterWallDistance, rng)
 		z := g.sampleIntProvider(cfg.OuterWallDistance, rng)
 		pointPos := pos.Add(cube.Pos{x, y, z})
-		if !g.positionInChunk(pointPos, chunkX, chunkZ, minY, maxY) {
+		if !g.positionInFeatureScope(pointPos, chunkX, chunkZ, minY, maxY) {
 			numInvalid++
 			continue
 		}
@@ -994,7 +994,7 @@ func (g Generator) executeGeode(c *chunk.Chunk, pos cube.Pos, cfg gen.GeodeConfi
 		for y := pos[1] + cfg.MinGenOffset; y <= pos[1]+cfg.MaxGenOffset; y++ {
 			for z := pos[2] + cfg.MinGenOffset; z <= pos[2]+cfg.MaxGenOffset; z++ {
 				pointInside := cube.Pos{x, y, z}
-				if !g.positionInChunk(pointInside, chunkX, chunkZ, minY, maxY) {
+				if !g.positionInFeatureScope(pointInside, chunkX, chunkZ, minY, maxY) {
 					continue
 				}
 				noiseOffset := g.geodeNoiseValue(pointInside) * cfg.NoiseMultiplier
@@ -1050,7 +1050,7 @@ func (g Generator) executeGeode(c *chunk.Chunk, pos cube.Pos, cfg gen.GeodeConfi
 		state := cfg.Blocks.InnerPlacements[int(rng.NextInt(uint32(len(cfg.Blocks.InnerPlacements))))]
 		for _, face := range cube.Faces() {
 			placePos := crystalPos.Side(face)
-			if !g.positionInChunk(placePos, chunkX, chunkZ, minY, maxY) {
+			if !g.positionInFeatureScope(placePos, chunkX, chunkZ, minY, maxY) {
 				continue
 			}
 			placeName := g.blockNameAt(c, placePos)
@@ -1126,7 +1126,7 @@ func (g Generator) executeFossil(c *chunk.Chunk, pos cube.Pos, cfg gen.FossilCon
 
 	placedAny := false
 	for _, blockInfo := range g.processStructureTemplatePlacement(c, chunkX, chunkZ, reference, rotation, structureMirrorNone, cube.Pos{}, false, baseTemplate, basePlacement) {
-		if !g.positionInChunk(blockInfo.worldPos, chunkX, chunkZ, minY, maxY) {
+		if !g.positionInFeatureScope(blockInfo.worldPos, chunkX, chunkZ, minY, maxY) {
 			continue
 		}
 		if blockInfo.state.Name == "structure_void" || blockInfo.state.Name == "jigsaw" || blockInfo.state.Name == "structure_block" || blockInfo.state.Name == "air" {
@@ -1137,7 +1137,7 @@ func (g Generator) executeFossil(c *chunk.Chunk, pos cube.Pos, cfg gen.FossilCon
 		placedAny = true
 	}
 	for _, blockInfo := range g.processStructureTemplatePlacement(c, chunkX, chunkZ, reference, rotation, structureMirrorNone, cube.Pos{}, false, overlayTemplate, overlayPlacement) {
-		if !g.positionInChunk(blockInfo.worldPos, chunkX, chunkZ, minY, maxY) {
+		if !g.positionInFeatureScope(blockInfo.worldPos, chunkX, chunkZ, minY, maxY) {
 			continue
 		}
 		if blockInfo.state.Name == "structure_void" || blockInfo.state.Name == "jigsaw" || blockInfo.state.Name == "structure_block" || blockInfo.state.Name == "air" {
@@ -1163,7 +1163,7 @@ func (g Generator) fossilEmptyCorners(c *chunk.Chunk, chunkX, chunkZ, minY, maxY
 	}
 	count := 0
 	for _, corner := range corners {
-		if !g.positionInChunk(corner, chunkX, chunkZ, minY, maxY) {
+		if !g.positionInFeatureScope(corner, chunkX, chunkZ, minY, maxY) {
 			continue
 		}
 		name := g.blockNameAt(c, corner)
@@ -1175,7 +1175,7 @@ func (g Generator) fossilEmptyCorners(c *chunk.Chunk, chunkX, chunkZ, minY, maxY
 }
 
 func (g Generator) setGeodeState(c *chunk.Chunk, pos cube.Pos, state gen.BlockState, cannotReplaceTag string, chunkX, chunkZ, minY, maxY int) bool {
-	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+	if !g.positionInFeatureScope(pos, chunkX, chunkZ, minY, maxY) {
 		return false
 	}
 	if g.matchesFeatureBlockTag(g.blockNameAt(c, pos), cannotReplaceTag) {
@@ -1215,14 +1215,10 @@ func (g Generator) placeLargeDripstoneColumn(c *chunk.Chunk, root cube.Pos, poin
 			hasBeenOutOfStone := false
 			maxYLimit := math.MaxInt
 			if pointingUp {
-				localX := pos[0] - chunkX*16
-				localZ := pos[2] - chunkZ*16
-				if localX >= 0 && localX < 16 && localZ >= 0 && localZ < 16 {
-					maxYLimit = g.heightmapPlacementY(c, localX, localZ, "WORLD_SURFACE_WG", minY, maxY)
-				}
+				maxYLimit = g.heightmapPlacementYAtPos(c, pos, "WORLD_SURFACE_WG", chunkX, chunkZ, minY, maxY)
 			}
 			for i := 0; i < height && pos[1] < maxYLimit; i++ {
-				if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+				if !g.positionInFeatureScope(pos, chunkX, chunkZ, minY, maxY) {
 					break
 				}
 				name := g.blockNameAt(c, pos)
@@ -1700,10 +1696,10 @@ func (g Generator) executeMonsterRoom(c *chunk.Chunk, pos cube.Pos, chunkX, chun
 		for dy := -1; dy <= 4; dy++ {
 			for dz := minZ; dz <= maxZRoom; dz++ {
 				cursor := pos.Add(cube.Pos{dx, dy, dz})
-				if !g.positionInChunk(cursor, chunkX, chunkZ, minY, maxY) {
+				if !g.positionInFeatureScope(cursor, chunkX, chunkZ, minY, maxY) {
 					return false
 				}
-				solid := g.isSolidRID(c.Block(uint8(cursor[0]&15), int16(cursor[1]), uint8(cursor[2]&15), 0))
+				solid := g.isSolidRID(g.runtimeIDAt(c, cursor))
 				if dy == -1 && !solid {
 					return false
 				}
@@ -1712,7 +1708,7 @@ func (g Generator) executeMonsterRoom(c *chunk.Chunk, pos cube.Pos, chunkX, chun
 				}
 				if (dx == minX || dx == maxXRoom || dz == minZ || dz == maxZRoom) && dy == 0 {
 					above := cursor.Side(cube.FaceUp)
-					if g.blockNameAt(c, cursor) == "air" && g.positionInChunk(above, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, above) == "air" {
+					if g.blockNameAt(c, cursor) == "air" && g.positionInFeatureScope(above, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, above) == "air" {
 						holeCount++
 					}
 				}
@@ -1734,11 +1730,11 @@ func (g Generator) executeMonsterRoom(c *chunk.Chunk, pos cube.Pos, chunkX, chun
 				name := g.blockNameAt(c, cursor)
 				if dx == minX || dy == -1 || dz == minZ || dx == maxXRoom || dy == 4 || dz == maxZRoom {
 					below := cursor.Side(cube.FaceDown)
-					if cursor[1] >= minY && g.positionInChunk(below, chunkX, chunkZ, minY, maxY) && !g.isSolidRID(c.Block(uint8(below[0]&15), int16(below[1]), uint8(below[2]&15), 0)) {
+					if cursor[1] >= minY && g.positionInFeatureScope(below, chunkX, chunkZ, minY, maxY) && !g.isSolidRID(g.runtimeIDAt(c, below)) {
 						if !protected(cursor) {
 							_ = g.setBlockStateDirect(c, cursor, gen.BlockState{Name: "air"})
 						}
-					} else if g.isSolidRID(c.Block(uint8(cursor[0]&15), int16(cursor[1]), uint8(cursor[2]&15), 0)) && name != "chest" {
+					} else if g.isSolidRID(g.runtimeIDAt(c, cursor)) && name != "chest" {
 						if protected(cursor) {
 							continue
 						}
@@ -1760,13 +1756,13 @@ func (g Generator) executeMonsterRoom(c *chunk.Chunk, pos cube.Pos, chunkX, chun
 			xc := pos[0] + int(rng.NextInt(uint32(xr*2+1))) - xr
 			zc := pos[2] + int(rng.NextInt(uint32(zr*2+1))) - zr
 			chestPos := cube.Pos{xc, pos[1], zc}
-			if !g.positionInChunk(chestPos, chunkX, chunkZ, minY, maxY) || g.blockNameAt(c, chestPos) != "air" {
+			if !g.positionInFeatureScope(chestPos, chunkX, chunkZ, minY, maxY) || g.blockNameAt(c, chestPos) != "air" {
 				continue
 			}
 			wallCount := 0
 			for _, dir := range []cube.Pos{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}} {
 				side := chestPos.Add(dir)
-				if g.positionInChunk(side, chunkX, chunkZ, minY, maxY) && g.isSolidRID(c.Block(uint8(side[0]&15), int16(side[1]), uint8(side[2]&15), 0)) {
+				if g.positionInFeatureScope(side, chunkX, chunkZ, minY, maxY) && g.isSolidRID(g.runtimeIDAt(c, side)) {
 					wallCount++
 				}
 			}
@@ -1795,7 +1791,7 @@ func (g Generator) executeDesertWell(c *chunk.Chunk, pos cube.Pos, chunkX, chunk
 		for oz := -2; oz <= 2; oz++ {
 			below1 := origin.Add(cube.Pos{ox, -1, oz})
 			below2 := origin.Add(cube.Pos{ox, -2, oz})
-			if g.positionInChunk(below1, chunkX, chunkZ, minY, maxY) && g.positionInChunk(below2, chunkX, chunkZ, minY, maxY) &&
+			if g.positionInFeatureScope(below1, chunkX, chunkZ, minY, maxY) && g.positionInFeatureScope(below2, chunkX, chunkZ, minY, maxY) &&
 				g.blockNameAt(c, below1) == "air" && g.blockNameAt(c, below2) == "air" {
 				return false
 			}
@@ -2068,7 +2064,7 @@ func (g Generator) executeVegetationPatch(c *chunk.Chunk, biomes sourceBiomeVolu
 }
 
 func (g Generator) executeRootSystem(c *chunk.Chunk, biomes sourceBiomeVolume, pos cube.Pos, cfg gen.RootSystemConfig, topFeatureName string, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128, depth int) bool {
-	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) || !g.testBlockPredicate(c, pos, cfg.AllowedTreePosition, chunkX, chunkZ, minY, maxY, rng) {
+	if !g.positionInFeatureScope(pos, chunkX, chunkZ, minY, maxY) || !g.testBlockPredicate(c, pos, cfg.AllowedTreePosition, chunkX, chunkZ, minY, maxY, rng) {
 		return false
 	}
 
@@ -2613,13 +2609,13 @@ func (g Generator) executeIceberg(c *chunk.Chunk, pos cube.Pos, cfg gen.BlockSta
 }
 
 func (g Generator) executeBlueIce(c *chunk.Chunk, pos cube.Pos, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
-	if pos[1] > seaLevel-1 || !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+	if pos[1] > seaLevel-1 || !g.positionInFeatureScope(pos, chunkX, chunkZ, minY, maxY) {
 		return false
 	}
 	originName := g.blockNameAt(c, pos)
 	belowName := "air"
 	below := pos.Side(cube.FaceDown)
-	if g.positionInChunk(below, chunkX, chunkZ, minY, maxY) {
+	if g.positionInFeatureScope(below, chunkX, chunkZ, minY, maxY) {
 		belowName = g.blockNameAt(c, below)
 	}
 	if originName != "water" && belowName != "water" {
@@ -2631,7 +2627,7 @@ func (g Generator) executeBlueIce(c *chunk.Chunk, pos cube.Pos, chunkX, chunkZ, 
 			continue
 		}
 		neighbor := pos.Side(face)
-		if g.positionInChunk(neighbor, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, neighbor) == "packed_ice" {
+		if g.positionInFeatureScope(neighbor, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, neighbor) == "packed_ice" {
 			foundPackedIce = true
 			break
 		}
@@ -2654,7 +2650,7 @@ func (g Generator) executeBlueIce(c *chunk.Chunk, pos cube.Pos, chunkX, chunkZ, 
 			yOff,
 			int(rng.NextInt(uint32(xzDiff))) - int(rng.NextInt(uint32(xzDiff))),
 		})
-		if !g.positionInChunk(placePos, chunkX, chunkZ, minY, maxY) {
+		if !g.positionInFeatureScope(placePos, chunkX, chunkZ, minY, maxY) {
 			continue
 		}
 		placeName := g.blockNameAt(c, placePos)
@@ -2663,7 +2659,7 @@ func (g Generator) executeBlueIce(c *chunk.Chunk, pos cube.Pos, chunkX, chunkZ, 
 		}
 		for _, face := range cube.Faces() {
 			neighbor := placePos.Side(face)
-			if g.positionInChunk(neighbor, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, neighbor) == "blue_ice" {
+			if g.positionInFeatureScope(neighbor, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, neighbor) == "blue_ice" {
 				if g.setBlockStateDirect(c, placePos, gen.BlockState{Name: "blue_ice"}) {
 					placedAny = true
 				}
@@ -2742,7 +2738,7 @@ func (g Generator) generateIcebergBlock(c *chunk.Chunk, origin cube.Pos, height,
 }
 
 func (g Generator) setIcebergBlock(c *chunk.Chunk, pos cube.Pos, hDiff, height int, isEllipse, snowOnTop bool, mainState gen.BlockState, chunkX, chunkZ, minY, maxY int, rng *gen.Xoroshiro128) bool {
-	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+	if !g.positionInFeatureScope(pos, chunkX, chunkZ, minY, maxY) {
 		return false
 	}
 	name := g.blockNameAt(c, pos)
@@ -2769,7 +2765,7 @@ func (g Generator) smoothIceberg(c *chunk.Chunk, origin cube.Pos, width, height 
 		for z := -a; z <= a; z++ {
 			for yOff := 0; yOff <= height; yOff++ {
 				pos := origin.Add(cube.Pos{x, yOff, z})
-				if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+				if !g.positionInFeatureScope(pos, chunkX, chunkZ, minY, maxY) {
 					continue
 				}
 				name := g.blockNameAt(c, pos)
@@ -2777,10 +2773,10 @@ func (g Generator) smoothIceberg(c *chunk.Chunk, origin cube.Pos, width, height 
 					continue
 				}
 				below := pos.Side(cube.FaceDown)
-				if g.positionInChunk(below, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, below) == "air" {
+				if g.positionInFeatureScope(below, chunkX, chunkZ, minY, maxY) && g.blockNameAt(c, below) == "air" {
 					_ = g.setBlockStateDirect(c, pos, gen.BlockState{Name: "air"})
 					above := pos.Side(cube.FaceUp)
-					if g.positionInChunk(above, chunkX, chunkZ, minY, maxY) {
+					if g.positionInFeatureScope(above, chunkX, chunkZ, minY, maxY) {
 						_ = g.setBlockStateDirect(c, above, gen.BlockState{Name: "air"})
 					}
 					continue
@@ -2790,7 +2786,7 @@ func (g Generator) smoothIceberg(c *chunk.Chunk, origin cube.Pos, width, height 
 					for _, dir := range []cube.Pos{{-1, 0, 0}, {1, 0, 0}, {0, 0, -1}, {0, 0, 1}} {
 						side := pos.Add(dir)
 						sideName := "air"
-						if g.positionInChunk(side, chunkX, chunkZ, minY, maxY) {
+						if g.positionInFeatureScope(side, chunkX, chunkZ, minY, maxY) {
 							sideName = g.blockNameAt(c, side)
 						}
 						if sideName != "packed_ice" && sideName != "blue_ice" && sideName != "snow" {
@@ -3668,6 +3664,26 @@ func (g Generator) placeFeatureState(c *chunk.Chunk, pos cube.Pos, state gen.Blo
 	}
 
 	return true
+}
+
+func (g Generator) positionInFeatureScope(pos cube.Pos, chunkX, chunkZ, minY, maxY int) bool {
+	if g.activeTreeRegion != nil {
+		return g.activeTreeRegion.contains(pos)
+	}
+	return g.positionInChunk(pos, chunkX, chunkZ, minY, maxY)
+}
+
+func (g Generator) runtimeIDAt(c *chunk.Chunk, pos cube.Pos) uint32 {
+	c = g.chunkForActiveTreePos(c, pos)
+	return c.Block(uint8(pos[0]&15), int16(pos[1]), uint8(pos[2]&15), 0)
+}
+
+func (g Generator) heightmapPlacementYAtPos(c *chunk.Chunk, pos cube.Pos, kind string, chunkX, chunkZ, minY, maxY int) int {
+	if !g.positionInFeatureScope(pos, chunkX, chunkZ, minY, maxY) {
+		return minY
+	}
+	c = g.chunkForActiveTreePos(c, pos)
+	return g.heightmapPlacementY(c, pos[0]&15, pos[2]&15, kind, minY, maxY)
 }
 
 func (g Generator) featureBlockFromState(state gen.BlockState, rng *gen.Xoroshiro128) (world.Block, bool) {
@@ -5654,10 +5670,10 @@ func (g Generator) multifaceStateAt(c *chunk.Chunk, pos cube.Pos, cfg gen.Multif
 }
 
 func (g Generator) isSolidInChunk(c *chunk.Chunk, pos cube.Pos, chunkX, chunkZ, minY, maxY int) bool {
-	if !g.positionInChunk(pos, chunkX, chunkZ, minY, maxY) {
+	if !g.positionInFeatureScope(pos, chunkX, chunkZ, minY, maxY) {
 		return false
 	}
-	return g.isSolidRID(c.Block(uint8(pos[0]&15), int16(pos[1]), uint8(pos[2]&15), 0))
+	return g.isSolidRID(g.runtimeIDAt(c, pos))
 }
 
 func (g Generator) findFloorAndCeiling(c *chunk.Chunk, pos cube.Pos, searchRange, chunkX, chunkZ, minY, maxY int) (cube.Pos, cube.Pos, bool) {

@@ -684,11 +684,12 @@ func (g Generator) structureWorldBlockState(c *chunk.Chunk, chunkX, chunkZ int, 
 	if c == nil {
 		return gen.BlockState{Name: "air"}
 	}
-	if pos[0] < chunkX*16 || pos[0] >= chunkX*16+16 || pos[2] < chunkZ*16 || pos[2] >= chunkZ*16+16 {
+	if !g.positionInFeatureScope(pos, chunkX, chunkZ, c.Range().Min(), c.Range().Max()) {
 		return gen.BlockState{Name: "air"}
 	}
-	localX := pos[0] - chunkX*16
-	localZ := pos[2] - chunkZ*16
+	c = g.chunkForActiveTreePos(c, pos)
+	localX := pos[0] & 15
+	localZ := pos[2] & 15
 	if pos[1] < c.Range().Min() || pos[1] > c.Range().Max() {
 		return gen.BlockState{Name: "air"}
 	}

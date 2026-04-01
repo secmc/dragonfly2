@@ -855,6 +855,41 @@ func TestExecuteConfiguredDesertWellPlacesSandstoneAndWater(t *testing.T) {
 	}
 }
 
+func TestExecuteDesertWellSpillsIntoNeighbourChunkWithActiveRegion(t *testing.T) {
+	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
+
+	g := New(0)
+	center := chunk.New(g.airRID, cube.Range{-64, 319})
+	east := chunk.New(g.airRID, cube.Range{-64, 319})
+	for x := 0; x < 16; x++ {
+		for z := 0; z < 16; z++ {
+			for y := 60; y <= 62; y++ {
+				center.SetBlock(uint8(x), int16(y), uint8(z), 0, world.BlockRuntimeID(block.Sand{}))
+				east.SetBlock(uint8(x), int16(y), uint8(z), 0, world.BlockRuntimeID(block.Sand{}))
+			}
+		}
+	}
+	region := &treeDecorationRegion{
+		centerChunkX: 0,
+		centerChunkZ: 0,
+		minY:         center.Range().Min(),
+		maxY:         center.Range().Max(),
+		slots:        map[[2]int]treeDecorationRegionSlot{},
+	}
+	biomes := filledTestBiomeVolume(center.Range().Min(), center.Range().Max(), gen.BiomeDesert)
+	region.set(0, 0, center, biomes)
+	region.set(1, 0, east, biomes)
+
+	rng := gen.NewXoroshiro128FromSeed(1)
+	g.activeTreeRegion = region
+	if !g.executeDesertWell(center, cube.Pos{15, 61, 8}, 0, 0, center.Range().Min(), center.Range().Max(), &rng) {
+		t.Fatal("expected desert well to place with active region")
+	}
+	if countBlocksNamed(east, "minecraft:sandstone") == 0 && countBlocksNamed(east, "minecraft:water") == 0 && countBlocksNamed(east, "minecraft:flowing_water") == 0 {
+		t.Fatal("expected desert well to spill into the east neighbouring chunk")
+	}
+}
+
 func TestExecuteConfiguredVoidStartPlatformPlacesStonePlatform(t *testing.T) {
 	finaliseBlocksOnce.Do(worldFinaliseBlockRegistry)
 

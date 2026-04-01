@@ -79,6 +79,10 @@ func (g Generator) chunkForActiveTreePos(c *chunk.Chunk, pos cube.Pos) *chunk.Ch
 }
 
 func (g Generator) runPlacedTreeFeatureAcrossRegion(region *treeDecorationRegion, step gen.GenerationStep, featureName string, featureIndex int) {
+	g.runPlacedFeatureAcrossRegion(region, step, featureName, featureIndex)
+}
+
+func (g Generator) runPlacedFeatureAcrossRegion(region *treeDecorationRegion, step gen.GenerationStep, featureName string, featureIndex int) {
 	placed, err := g.features.Placed(featureName)
 	if err != nil {
 		return
@@ -129,11 +133,11 @@ func (g Generator) runPlacedTreeFeatureAcrossRegion(region *treeDecorationRegion
 	}
 }
 
-func (g Generator) placedFeatureMayPlaceTrees(featureName string) bool {
-	return g.placedFeatureRefMayPlaceTrees(gen.PlacedFeatureRef{Name: featureName}, map[string]struct{}{}, map[string]struct{}{})
+func (g Generator) placedFeatureNeedsDecorationRegion(featureName string) bool {
+	return g.placedFeatureRefNeedsDecorationRegion(gen.PlacedFeatureRef{Name: featureName}, map[string]struct{}{}, map[string]struct{}{})
 }
 
-func (g Generator) placedFeatureRefMayPlaceTrees(ref gen.PlacedFeatureRef, seenPlaced, seenConfigured map[string]struct{}) bool {
+func (g Generator) placedFeatureRefNeedsDecorationRegion(ref gen.PlacedFeatureRef, seenPlaced, seenConfigured map[string]struct{}) bool {
 	if ref.Name != "" {
 		if _, ok := seenPlaced[ref.Name]; ok {
 			return false
@@ -145,10 +149,10 @@ func (g Generator) placedFeatureRefMayPlaceTrees(ref gen.PlacedFeatureRef, seenP
 	if err != nil {
 		return false
 	}
-	return g.configuredFeatureRefMayPlaceTrees(placed.Feature, seenPlaced, seenConfigured)
+	return g.configuredFeatureRefNeedsDecorationRegion(placed.Feature, seenPlaced, seenConfigured)
 }
 
-func (g Generator) configuredFeatureRefMayPlaceTrees(ref gen.ConfiguredFeatureRef, seenPlaced, seenConfigured map[string]struct{}) bool {
+func (g Generator) configuredFeatureRefNeedsDecorationRegion(ref gen.ConfiguredFeatureRef, seenPlaced, seenConfigured map[string]struct{}) bool {
 	if ref.Name != "" {
 		if _, ok := seenConfigured[ref.Name]; ok {
 			return false
@@ -162,7 +166,7 @@ func (g Generator) configuredFeatureRefMayPlaceTrees(ref gen.ConfiguredFeatureRe
 	}
 
 	switch feature.Type {
-	case "tree":
+	case "tree", "geode", "fossil", "monster_room", "desert_well", "iceberg", "blue_ice":
 		return true
 	case "random_selector":
 		cfg, err := feature.RandomSelector()
@@ -170,18 +174,18 @@ func (g Generator) configuredFeatureRefMayPlaceTrees(ref gen.ConfiguredFeatureRe
 			return false
 		}
 		for _, entry := range cfg.Features {
-			if g.placedFeatureRefMayPlaceTrees(entry.Feature, seenPlaced, seenConfigured) {
+			if g.placedFeatureRefNeedsDecorationRegion(entry.Feature, seenPlaced, seenConfigured) {
 				return true
 			}
 		}
-		return g.placedFeatureRefMayPlaceTrees(cfg.Default, seenPlaced, seenConfigured)
+		return g.placedFeatureRefNeedsDecorationRegion(cfg.Default, seenPlaced, seenConfigured)
 	case "simple_random_selector":
 		cfg, err := feature.SimpleRandomSelector()
 		if err != nil {
 			return false
 		}
 		for _, entry := range cfg.Features {
-			if g.placedFeatureRefMayPlaceTrees(entry, seenPlaced, seenConfigured) {
+			if g.placedFeatureRefNeedsDecorationRegion(entry, seenPlaced, seenConfigured) {
 				return true
 			}
 		}
@@ -191,8 +195,8 @@ func (g Generator) configuredFeatureRefMayPlaceTrees(ref gen.ConfiguredFeatureRe
 		if err != nil {
 			return false
 		}
-		return g.placedFeatureRefMayPlaceTrees(cfg.FeatureTrue, seenPlaced, seenConfigured) ||
-			g.placedFeatureRefMayPlaceTrees(cfg.FeatureFalse, seenPlaced, seenConfigured)
+		return g.placedFeatureRefNeedsDecorationRegion(cfg.FeatureTrue, seenPlaced, seenConfigured) ||
+			g.placedFeatureRefNeedsDecorationRegion(cfg.FeatureFalse, seenPlaced, seenConfigured)
 	case "random_patch", "flower":
 		var (
 			cfg gen.RandomPatchConfig
@@ -206,7 +210,7 @@ func (g Generator) configuredFeatureRefMayPlaceTrees(ref gen.ConfiguredFeatureRe
 		if err != nil {
 			return false
 		}
-		return g.placedFeatureRefMayPlaceTrees(cfg.Feature, seenPlaced, seenConfigured)
+		return g.placedFeatureRefNeedsDecorationRegion(cfg.Feature, seenPlaced, seenConfigured)
 	case "vegetation_patch", "waterlogged_vegetation_patch":
 		var (
 			cfg gen.VegetationPatchConfig
@@ -220,13 +224,13 @@ func (g Generator) configuredFeatureRefMayPlaceTrees(ref gen.ConfiguredFeatureRe
 		if err != nil {
 			return false
 		}
-		return g.placedFeatureRefMayPlaceTrees(cfg.VegetationFeature, seenPlaced, seenConfigured)
+		return g.placedFeatureRefNeedsDecorationRegion(cfg.VegetationFeature, seenPlaced, seenConfigured)
 	case "root_system":
 		cfg, err := feature.RootSystem()
 		if err != nil {
 			return false
 		}
-		return g.placedFeatureRefMayPlaceTrees(cfg.Feature, seenPlaced, seenConfigured)
+		return g.placedFeatureRefNeedsDecorationRegion(cfg.Feature, seenPlaced, seenConfigured)
 	default:
 		return false
 	}
