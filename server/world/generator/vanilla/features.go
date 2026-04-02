@@ -95,7 +95,7 @@ func (g Generator) decorateFeaturesAndStructures(c *chunk.Chunk, biomes sourceBi
 }
 
 func (g Generator) collectChunkBiomes(c *chunk.Chunk, biomes sourceBiomeVolume, minY, maxY int, surfaceOnly bool) []gen.Biome {
-	var seen [256]bool
+	var seen biomeSet
 	if surfaceOnly {
 		for localX := 0; localX < 16; localX++ {
 			for localZ := 0; localZ < 16; localZ++ {
@@ -106,14 +106,14 @@ func (g Generator) collectChunkBiomes(c *chunk.Chunk, biomes sourceBiomeVolume, 
 				if surfaceY > maxY {
 					surfaceY = maxY
 				}
-				seen[biomes.biomeAt(localX, surfaceY, localZ)] = true
+				seen.add(biomes.biomeAt(localX, surfaceY, localZ))
 			}
 		}
 	} else {
 		for localX := 0; localX < 16; localX += 4 {
 			for localZ := 0; localZ < 16; localZ += 4 {
 				for y := minY; y <= maxY; y += 4 {
-					seen[biomes.biomeAt(localX, y, localZ)] = true
+					seen.add(biomes.biomeAt(localX, y, localZ))
 				}
 			}
 		}
@@ -121,7 +121,7 @@ func (g Generator) collectChunkBiomes(c *chunk.Chunk, biomes sourceBiomeVolume, 
 
 	out := make([]gen.Biome, 0, 8)
 	for _, biome := range sortedBiomesByKey {
-		if seen[biome] {
+		if seen.contains(biome) {
 			out = append(out, biome)
 		}
 	}
@@ -129,7 +129,7 @@ func (g Generator) collectChunkBiomes(c *chunk.Chunk, biomes sourceBiomeVolume, 
 }
 
 func (g Generator) collectPossibleFeatureBiomes(chunkX, chunkZ, minY, maxY int) []gen.Biome {
-	var seen [256]bool
+	var seen biomeSet
 	startY := alignDown(minY, biomeCellSize)
 	for sampleChunkX := chunkX - 1; sampleChunkX <= chunkX+1; sampleChunkX++ {
 		for sampleChunkZ := chunkZ - 1; sampleChunkZ <= chunkZ+1; sampleChunkZ++ {
@@ -138,7 +138,7 @@ func (g Generator) collectPossibleFeatureBiomes(chunkX, chunkZ, minY, maxY int) 
 				for localZ := 0; localZ < 16; localZ += biomeCellSize {
 					worldZ := sampleChunkZ*16 + localZ
 					for y := startY; y <= maxY; y += biomeCellSize {
-						seen[g.biomeSource.GetBiome(worldX, y, worldZ)] = true
+						seen.add(g.biomeSource.GetBiome(worldX, y, worldZ))
 					}
 				}
 			}
@@ -147,7 +147,7 @@ func (g Generator) collectPossibleFeatureBiomes(chunkX, chunkZ, minY, maxY int) 
 
 	out := make([]gen.Biome, 0, 16)
 	for _, biome := range sortedBiomesByKey {
-		if seen[biome] {
+		if seen.contains(biome) {
 			out = append(out, biome)
 		}
 	}

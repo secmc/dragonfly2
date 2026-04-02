@@ -13,6 +13,16 @@ type sourceBiomeVolume struct {
 	data   []gen.Biome
 }
 
+type biomeSet [4]uint64
+
+func (s *biomeSet) add(biome gen.Biome) {
+	s[biome>>6] |= 1 << (biome & 63)
+}
+
+func (s biomeSet) contains(biome gen.Biome) bool {
+	return s[biome>>6]&(1<<(biome&63)) != 0
+}
+
 func newSourceBiomeVolume(minY, maxY int) sourceBiomeVolume {
 	startY := alignDown(minY, biomeCellSize)
 	cellsY := (maxY-startY)/biomeCellSize + 1

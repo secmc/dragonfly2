@@ -38,6 +38,7 @@ type Generator struct {
 	carvers            *gen.CarverRegistry
 	features           *gen.FeatureRegistry
 	biomeGeneration    *biomeGenerationIndex
+	featureRegionCache *featureMarginCache
 	structureTemplates *gen.StructureTemplateRegistry
 	structureResolver  *structureResolver
 	structurePlanners  []structurePlanner
@@ -102,6 +103,7 @@ func NewForDimension(seed int64, dim world.Dimension) Generator {
 		carvers:            carvers,
 		features:           features,
 		biomeGeneration:    biomeGeneration,
+		featureRegionCache: newFeatureMarginCache(),
 		structureTemplates: structureTemplates,
 		structureResolver:  structureResolver,
 		structurePlanners:  structurePlanners,
